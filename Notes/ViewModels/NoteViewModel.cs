@@ -106,6 +106,11 @@ namespace Notes.ViewModels
 
         public async Task AddAttachmentAsync(StorageFile file)
         {
+            Debug.WriteLine("=== [NoteViewModel] AddAttachmentAsync ENTRY ===");
+            Debug.WriteLine($"[NoteViewModel] Adding attachment: {file?.Name ?? "NULL FILE"}");
+            Debug.WriteLine($"[NoteViewModel] File path: {file?.Path ?? "NULL PATH"}");
+            Debug.WriteLine($"[NoteViewModel] File type: {file?.FileType ?? "NULL TYPE"}");
+            
             var attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
             bool shouldCopyFile = true;
 
@@ -115,40 +120,67 @@ namespace Notes.ViewModels
                 Note = Note
             };
 
+            Debug.WriteLine($"[NoteViewModel] Created attachment object");
+
             if (new string[] { ".png", ".jpg", ".jpeg"}.Contains(file.FileType))
             {
                 attachment.Type = NoteAttachmentType.Image;
+                Debug.WriteLine($"[NoteViewModel] Attachment type: Image");
             }
             else if (new string[] { ".mp3", ".wav", ".m4a", ".opus", ".waptt" }.Contains(file.FileType))
             {
                 attachment.Type = NoteAttachmentType.Audio;
-                file = await Utils.SaveAudioFileAsWav(file, attachmentsFolder);
-                shouldCopyFile = false;
+                Debug.WriteLine($"[NoteViewModel] Attachment type: Audio");
+                
+                // Only convert to WAV if it's not already a WAV file, or if it's not already in the attachments folder
+                if (file.FileType != ".wav" || !file.Path.StartsWith(attachmentsFolder.Path))
+                {
+                    Debug.WriteLine($"[NoteViewModel] Converting audio file to WAV: {file.Path}");
+                    file = await Utils.SaveAudioFileAsWav(file, attachmentsFolder);
+                    shouldCopyFile = false;
+                }
+                else
+                {
+                    Debug.WriteLine($"[NoteViewModel] Audio file is already WAV in attachments folder: {file.Path}");
+                    shouldCopyFile = false; // File is already in the right place and format
+                }
             }
             else if (file.FileType == ".mp4")
             {
                 attachment.Type = NoteAttachmentType.Video;
+                Debug.WriteLine($"[NoteViewModel] Attachment type: Video");
             }
             else
             {
                 attachment.Type = NoteAttachmentType.Document;
+                Debug.WriteLine($"[NoteViewModel] Attachment type: Document");
             }
 
             if (shouldCopyFile && !file.Path.StartsWith(attachmentsFolder.Path))
             {
+                Debug.WriteLine($"[NoteViewModel] Copying file to attachments folder");
                 file = await file.CopyAsync(attachmentsFolder, file.Name, NameCollisionOption.GenerateUniqueName);
             }
 
             attachment.Filename = file.Name;
+            Debug.WriteLine($"[NoteViewModel] Final attachment filename: {attachment.Filename}");
 
             Attachments.Add(new AttachmentViewModel(attachment));
+            Debug.WriteLine($"[NoteViewModel] Added attachment to UI collection");
 
             var context = await AppDataContext.GetCurrentAsync();
             await context.Attachments.AddAsync(attachment);
+            Debug.WriteLine($"[NoteViewModel] Added attachment to database context");
 
             await context.SaveChangesAsync();
+            Debug.WriteLine($"[NoteViewModel] Saved changes to database");
 
+            Debug.WriteLine($"[NoteViewModel] CALLING AttachmentProcessor.AddAttachment: {attachment.Filename}");
+            Debug.WriteLine($"[NoteViewModel] Attachment ID: {attachment.Id}, Type: {attachment.Type}, IsProcessed: {attachment.IsProcessed}");
+            
             AttachmentProcessor.AddAttachment(attachment);
+            
+            Debug.WriteLine("=== [NoteViewModel] AddAttachmentAsync EXIT ===");
         }
 
         public async Task RemoveAttachmentAsync(AttachmentViewModel attachmentViewModel)

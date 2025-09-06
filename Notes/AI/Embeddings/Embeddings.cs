@@ -49,13 +49,15 @@ namespace Notes.AI.Embeddings
             try
             {
 
-                _inferenceSession = new InferenceSession($@"{modelRoot}\onnx\model.onnx", sessionOptions);
+                _inferenceSession = new InferenceSession($@"{modelRoot}\model.onnx", sessionOptions);
 
                 ModelLoaded?.Invoke(this, EventArgs.Empty);
             }
             catch (Exception e)
             {
-                Debug.WriteLine(e.Message);
+                Debug.WriteLine($"[Embeddings] ERROR: Failed to load embeddings model: {e.Message}");
+                Debug.WriteLine($"[Embeddings] Model path attempted: {modelRoot}\\model.onnx");
+                Debug.WriteLine($"[Embeddings] Exception details: {e}");
             }
         }
 

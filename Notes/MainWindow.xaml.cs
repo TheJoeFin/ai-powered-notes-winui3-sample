@@ -4,11 +4,14 @@ using Microsoft.UI.Xaml.Controls;
 using System.Collections.Specialized;
 using System.Linq;
 using System.Threading.Tasks;
+using System;
 using Notes.Controls;
 using Notes.AI.Embeddings;
 using Notes.Models;
 using Notes.Pages;
 using Notes.ViewModels;
+using Notes.Services;
+using System.Diagnostics;
 
 namespace Notes
 {
@@ -19,6 +22,8 @@ namespace Notes
         public static SearchView SearchView;
         public static MainWindow Instance;
         public ViewModel VM;
+        private AudioRecordingService _audioRecordingService;
+        private bool _isRecording = false;
 
         public MainWindow()
         {
@@ -33,6 +38,9 @@ namespace Notes
             SearchView = searchView;
 
             VM.Notes.CollectionChanged += Notes_CollectionChanged;
+            
+            // Initialize audio recording service
+            _audioRecordingService = new AudioRecordingService();
         }
 
         public async Task SelectNoteById(int id, int? attachmentId = null, string? attachmentText = null)
@@ -96,6 +104,129 @@ namespace Notes
         private void AskMyNotesClicked(object sender, RoutedEventArgs e)
         {
             phi3View.ShowForRag();
+        }
+
+        private async void RecordButton_Click(object sender, RoutedEventArgs e)
+        {
+            Debug.WriteLine("[MainWindow] Record button clicked");
+            
+            try
+            {
+                if (!_isRecording)
+                {
+                    Debug.WriteLine("[MainWindow] Starting recording...");
+                    await StartRecording();
+                }
+                else
+                {
+                    Debug.WriteLine("[MainWindow] Stopping recording...");
+                    await StopRecording();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[MainWindow] ERROR: Recording operation failed: {ex.Message}");
+                Debug.WriteLine($"[MainWindow] Exception details: {ex}");
+                
+                // Show error message to user
+                var dialog = new ContentDialog
+                {
+                    Title = "Recording Error",
+                    Content = $"Recording failed: {ex.Message}",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.Content.XamlRoot
+                };
+                await dialog.ShowAsync();
+            }
+        }
+
+        private async Task StartRecording()
+        {
+            Debug.WriteLine("[MainWindow] Initializing audio recording service...");
+            
+            // Initialize the recording service
+            bool initialized = await _audioRecordingService.InitializeAsync();
+            if (!initialized)
+            {
+                Debug.WriteLine("[MainWindow] Failed to initialize audio recording service");
+                throw new InvalidOperationException("Failed to initialize audio recording service. Please check microphone permissions.");
+            }
+
+            Debug.WriteLine("[MainWindow] Starting audio recording...");
+            var recordingFile = await _audioRecordingService.StartRecordingAsync();
+            
+            if (recordingFile == null)
+            {
+                Debug.WriteLine("[MainWindow] Failed to start recording");
+                throw new InvalidOperationException("Failed to start recording.");
+            }
+
+            _isRecording = true;
+            Debug.WriteLine($"[MainWindow] Recording started successfully: {recordingFile.Path}");
+            
+            // TODO: Update UI to show recording state (change button icon, show recording indicator, etc.)
+        }
+
+        private async Task StopRecording()
+        {
+            Debug.WriteLine("[MainWindow] Stopping recording...");
+            
+            var recordingFile = await _audioRecordingService.StopRecordingAsync();
+            
+            if (recordingFile == null)
+            {
+                Debug.WriteLine("[MainWindow] Failed to stop recording");
+                throw new InvalidOperationException("Failed to stop recording.");
+            }
+
+            _isRecording = false;
+            Debug.WriteLine($"[MainWindow] Recording stopped successfully: {recordingFile.Path}");
+
+            // Add the recorded file as an attachment to the current note
+            await AddRecordingToCurrentNote(recordingFile);
+        }
+
+        private async Task AddRecordingToCurrentNote(Windows.Storage.StorageFile recordingFile)
+        {
+            Debug.WriteLine($"[MainWindow] Adding recording to current note: {recordingFile.Path}");
+            
+            try
+            {
+                // Get the currently selected note
+                if (navView.SelectedItem is NoteViewModel currentNote)
+                {
+                    Debug.WriteLine($"[MainWindow] Adding recording to note: {currentNote.Title}");
+                    await currentNote.AddAttachmentAsync(recordingFile);
+                    Debug.WriteLine($"[MainWindow] Recording successfully added to note: {currentNote.Title}");
+                }
+                else
+                {
+                    Debug.WriteLine("[MainWindow] No note selected, creating new note for recording");
+                    // Create a new note if none is selected
+                    var newNote = await VM.CreateNewNote();
+                    navView.SelectedItem = newNote;
+                    await newNote.AddAttachmentAsync(recordingFile);
+                    Debug.WriteLine($"[MainWindow] Recording added to new note: {newNote.Title}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[MainWindow] ERROR: Failed to add recording to note: {ex.Message}");
+                Debug.WriteLine($"[MainWindow] Exception details: {ex}");
+                throw;
+            }
+        }
+
+        private async Task ShowRecordingMessage()
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Recording Feature",
+                Content = "Recording feature is temporarily disabled while we fix some issues.",
+                CloseButtonText = "OK",
+                XamlRoot = this.Content.XamlRoot
+            };
+            await dialog.ShowAsync();
         }
 
         public void OpenAttachmentView(AttachmentViewModel attachment, string? attachmentText = null)

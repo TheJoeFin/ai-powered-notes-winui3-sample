@@ -21,6 +21,7 @@ using Notes.ViewModels;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.UI;
 using Notes.AI.TextRecognition;
+using System.Diagnostics;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -168,35 +169,131 @@ namespace Notes.Controls
 
         private async void RunWaitForTranscriptionTask(string? transcriptionTextToTryToShow = null)
         {
+            Debug.WriteLine($"[AttachmentView] RunWaitForTranscriptionTask - Attachment: {AttachmentVM?.Attachment?.Filename}");
+            Debug.WriteLine($"[AttachmentView] IsProcessed: {AttachmentVM?.Attachment?.IsProcessed}");
+            Debug.WriteLine($"[AttachmentView] FilenameForText: {AttachmentVM?.Attachment?.FilenameForText}");
+            Debug.WriteLine($"[AttachmentView] IsProcessing: {AttachmentVM?.IsProcessing}");
+            
             transcriptLoadingProgressRing.IsActive = true;
+            
             _ = Task.Run(async () =>
             {
-                while (AttachmentVM.IsProcessing)
+                try
                 {
-                    Thread.Sleep(500);
-                }
-                StorageFile transcriptFile = await (await Utils.GetAttachmentsTranscriptsFolderAsync()).GetFileAsync(AttachmentVM.Attachment.FilenameForText);
-                string rawTranscription = File.ReadAllText(transcriptFile.Path);
-                _dispatcher.TryEnqueue(() =>
-                {
-                    transcriptLoadingProgressRing.IsActive = false;
-                    var transcripts = WhisperUtils.ProcessTranscriptionWithTimestamps(rawTranscription);
+                    Debug.WriteLine("[AttachmentView] Starting transcription wait loop...");
                     
-                    foreach (var t in transcripts)
+                    // Safety check: if marked as processing but no processing is actually happening,
+                    // reset and trigger processing
+                    if (AttachmentVM.IsProcessing && !AttachmentVM.Attachment.IsProcessed)
                     {
-                        TranscriptionBlocks.Add(new TranscriptionBlock(t.Text, t.Start, t.End));
-                    }
-
-                    if (transcriptionTextToTryToShow != null)
-                    {
-                        var block = TranscriptionBlocks.Where(t => t.Text.Contains(transcriptionTextToTryToShow)).FirstOrDefault();
-                        if (block != null)
+                        Debug.WriteLine("[AttachmentView] Detected potential phantom processing state - waiting 5 seconds to confirm...");
+                        await Task.Delay(5000); // Wait 5 seconds to see if real processing is happening
+                        
+                        // If still stuck after 5 seconds and no AttachmentProcessor logs appeared, 
+                        // assume phantom state and reset
+                        if (AttachmentVM.IsProcessing && !AttachmentVM.Attachment.IsProcessed)
                         {
-                            transcriptBlocksListView.SelectedItem = block;
-                            ScrollTranscriptionToItem(block);
+                            Debug.WriteLine("[AttachmentView] PHANTOM PROCESSING DETECTED - Resetting and triggering processing");
+                            Debug.WriteLine("[AttachmentView] This indicates the attachment processor was never called or failed silently");
+                            
+                            // Reset the processing state on UI thread
+                            _dispatcher.TryEnqueue(() =>
+                            {
+                                AttachmentVM.IsProcessing = false;
+                            });
+                            
+                            // Wait a moment for the UI update to complete
+                            await Task.Delay(100);
+                            
+                            // Trigger processing manually
+                            Debug.WriteLine("[AttachmentView] Manually triggering AttachmentProcessor.AddAttachment");
+                            AttachmentProcessor.AddAttachment(AttachmentVM.Attachment);
                         }
                     }
-                });
+                    
+                    // If attachment isn't processed and no processing is happening, trigger processing
+                    if (!AttachmentVM.Attachment.IsProcessed && !AttachmentVM.IsProcessing)
+                    {
+                        Debug.WriteLine("[AttachmentView] Attachment not processed and not processing - triggering processing pipeline");
+                        AttachmentProcessor.AddAttachment(AttachmentVM.Attachment);
+                    }
+                    
+                    // Wait for processing to complete with timeout
+                    int maxWaitTime = 300; // 300 * 500ms = 2.5 minutes timeout
+                    int waitCounter = 0;
+                    
+                    while ((AttachmentVM.IsProcessing || !AttachmentVM.Attachment.IsProcessed) && waitCounter < maxWaitTime)
+                    {
+                        Debug.WriteLine($"[AttachmentView] Waiting... IsProcessing: {AttachmentVM.IsProcessing}, IsProcessed: {AttachmentVM.Attachment.IsProcessed} ({waitCounter}/{maxWaitTime})");
+                        Thread.Sleep(500);
+                        waitCounter++;
+                    }
+                    
+                    if (waitCounter >= maxWaitTime)
+                    {
+                        Debug.WriteLine("[AttachmentView] ERROR: Transcription timed out after 2.5 minutes");
+                        _dispatcher.TryEnqueue(() =>
+                        {
+                            transcriptLoadingProgressRing.IsActive = false;
+                            // Could show timeout error message here
+                        });
+                        return;
+                    }
+                    
+                    Debug.WriteLine("[AttachmentView] Processing completed, loading transcription file...");
+                    
+                    if (string.IsNullOrEmpty(AttachmentVM.Attachment.FilenameForText))
+                    {
+                        Debug.WriteLine("[AttachmentView] ERROR: No transcription file available after processing");
+                        _dispatcher.TryEnqueue(() =>
+                        {
+                            transcriptLoadingProgressRing.IsActive = false;
+                            // Could show an error message or retry button here
+                        });
+                        return;
+                    }
+                    
+                    var transcriptsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
+                    StorageFile transcriptFile = await transcriptsFolder.GetFileAsync(AttachmentVM.Attachment.FilenameForText);
+                    string rawTranscription = File.ReadAllText(transcriptFile.Path);
+                    
+                    Debug.WriteLine($"[AttachmentView] Transcription loaded: {rawTranscription.Length} characters");
+                    
+                    _dispatcher.TryEnqueue(() =>
+                    {
+                        transcriptLoadingProgressRing.IsActive = false;
+                        var transcripts = WhisperUtils.ProcessTranscriptionWithTimestamps(rawTranscription);
+                        
+                        Debug.WriteLine($"[AttachmentView] Processed {transcripts.Count} transcription blocks");
+                        
+                        foreach (var t in transcripts)
+                        {
+                            TranscriptionBlocks.Add(new TranscriptionBlock(t.Text, t.Start, t.End));
+                        }
+
+                        if (transcriptionTextToTryToShow != null)
+                        {
+                            var block = TranscriptionBlocks.Where(t => t.Text.Contains(transcriptionTextToTryToShow)).FirstOrDefault();
+                            if (block != null)
+                            {
+                                transcriptBlocksListView.SelectedItem = block;
+                                ScrollTranscriptionToItem(block);
+                            }
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[AttachmentView] ERROR: Transcription loading failed: {ex.Message}");
+                    Debug.WriteLine($"[AttachmentView] Exception details: {ex}");
+                    Debug.WriteLine($"[AttachmentView] Stack trace: {ex.StackTrace}");
+                    
+                    _dispatcher.TryEnqueue(() =>
+                    {
+                        transcriptLoadingProgressRing.IsActive = false;
+                        // Could show error message to user
+                    });
+                }
             });
         }
 
