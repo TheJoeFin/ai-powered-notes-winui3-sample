@@ -1,17 +1,14 @@
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Notes.Controls;
+using Notes.Pages;
+using Notes.Services;
+using Notes.ViewModels;
+using System;
 using System.Collections.Specialized;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
-using System;
-using Notes.Controls;
-using Notes.AI.Embeddings;
-using Notes.Models;
-using Notes.Pages;
-using Notes.ViewModels;
-using Notes.Services;
-using System.Diagnostics;
 
 namespace Notes
 {
@@ -38,7 +35,7 @@ namespace Notes
             SearchView = searchView;
 
             VM.Notes.CollectionChanged += Notes_CollectionChanged;
-            
+
             // Initialize audio recording service
             _audioRecordingService = new AudioRecordingService();
         }
@@ -51,7 +48,7 @@ namespace Notes
                 navView.SelectedItem = note;
 
                 if (attachmentId.HasValue)
-                { 
+                {
                     var attachmentViewModel = note.Attachments.Where(a => a.Attachment.Id == attachmentId).FirstOrDefault();
                     if (attachmentViewModel == null)
                     {
@@ -109,7 +106,7 @@ namespace Notes
         private async void RecordButton_Click(object sender, RoutedEventArgs e)
         {
             Debug.WriteLine("[MainWindow] Record button clicked");
-            
+
             try
             {
                 if (!_isRecording)
@@ -127,7 +124,7 @@ namespace Notes
             {
                 Debug.WriteLine($"[MainWindow] ERROR: Recording operation failed: {ex.Message}");
                 Debug.WriteLine($"[MainWindow] Exception details: {ex}");
-                
+
                 // Show error message to user
                 var dialog = new ContentDialog
                 {
@@ -143,7 +140,7 @@ namespace Notes
         private async Task StartRecording()
         {
             Debug.WriteLine("[MainWindow] Initializing audio recording service...");
-            
+
             // Initialize the recording service
             bool initialized = await _audioRecordingService.InitializeAsync();
             if (!initialized)
@@ -154,7 +151,7 @@ namespace Notes
 
             Debug.WriteLine("[MainWindow] Starting audio recording...");
             var recordingFile = await _audioRecordingService.StartRecordingAsync();
-            
+
             if (recordingFile == null)
             {
                 Debug.WriteLine("[MainWindow] Failed to start recording");
@@ -163,16 +160,16 @@ namespace Notes
 
             _isRecording = true;
             Debug.WriteLine($"[MainWindow] Recording started successfully: {recordingFile.Path}");
-            
+
             // TODO: Update UI to show recording state (change button icon, show recording indicator, etc.)
         }
 
         private async Task StopRecording()
         {
             Debug.WriteLine("[MainWindow] Stopping recording...");
-            
+
             var recordingFile = await _audioRecordingService.StopRecordingAsync();
-            
+
             if (recordingFile == null)
             {
                 Debug.WriteLine("[MainWindow] Failed to stop recording");
@@ -189,7 +186,7 @@ namespace Notes
         private async Task AddRecordingToCurrentNote(Windows.Storage.StorageFile recordingFile)
         {
             Debug.WriteLine($"[MainWindow] Adding recording to current note: {recordingFile.Path}");
-            
+
             try
             {
                 // Get the currently selected note

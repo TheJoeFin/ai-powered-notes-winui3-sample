@@ -1,27 +1,23 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using System.Collections.ObjectModel;
-using System.Threading.Tasks;
-using System.Threading;
-using Windows.Storage;
-using Windows.Media.Core;
-using Microsoft.UI.Dispatching;
-using Notes.Models;
-using Notes.AI.VoiceRecognition;
-using Notes.ViewModels;
 using Microsoft.UI.Xaml.Media.Imaging;
-using Windows.UI;
 using Notes.AI.TextRecognition;
+using Notes.AI.VoiceRecognition;
+using Notes.Models;
+using Notes.ViewModels;
+using System;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Windows.Media.Core;
+using Windows.Storage;
+using Windows.UI;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -36,7 +32,7 @@ namespace Notes.Controls
 
         public ObservableCollection<TranscriptionBlock> TranscriptionBlocks { get; set; } = new ObservableCollection<Models.TranscriptionBlock>();
         public AttachmentViewModel AttachmentVM { get; set; }
-    public bool AutoScrollEnabled { get; set; } = true;
+        public bool AutoScrollEnabled { get; set; } = true;
 
         public AttachmentView()
         {
@@ -60,7 +56,7 @@ namespace Notes.Controls
 
             if (AttachmentVM.Attachment.Type == NoteAttachmentType.Video || AttachmentVM.Attachment.Type == NoteAttachmentType.Audio)
             {
-                ResetMediaPlayer();  
+                ResetMediaPlayer();
             }
             if (_cts != null && !_cts.IsCancellationRequested)
             {
@@ -82,9 +78,9 @@ namespace Notes.Controls
             AttachmentVM = attachment;
             StorageFolder attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
             StorageFile attachmentFile = await attachmentsFolder.GetFileAsync(attachment.Attachment.Filename);
-            switch(AttachmentVM.Attachment.Type)
+            switch (AttachmentVM.Attachment.Type)
             {
-                case NoteAttachmentType.Audio: 
+                case NoteAttachmentType.Audio:
                     ImageGrid.Visibility = Visibility.Collapsed;
                     MediaGrid.Visibility = Visibility.Visible;
                     RunWaitForTranscriptionTask(attachmentText);
@@ -173,62 +169,62 @@ namespace Notes.Controls
             Debug.WriteLine($"[AttachmentView] IsProcessed: {AttachmentVM?.Attachment?.IsProcessed}");
             Debug.WriteLine($"[AttachmentView] FilenameForText: {AttachmentVM?.Attachment?.FilenameForText}");
             Debug.WriteLine($"[AttachmentView] IsProcessing: {AttachmentVM?.IsProcessing}");
-            
+
             transcriptLoadingProgressRing.IsActive = true;
-            
+
             _ = Task.Run(async () =>
             {
                 try
                 {
                     Debug.WriteLine("[AttachmentView] Starting transcription wait loop...");
-                    
+
                     // Safety check: if marked as processing but no processing is actually happening,
                     // reset and trigger processing
                     if (AttachmentVM.IsProcessing && !AttachmentVM.Attachment.IsProcessed)
                     {
                         Debug.WriteLine("[AttachmentView] Detected potential phantom processing state - waiting 5 seconds to confirm...");
                         await Task.Delay(5000); // Wait 5 seconds to see if real processing is happening
-                        
+
                         // If still stuck after 5 seconds and no AttachmentProcessor logs appeared, 
                         // assume phantom state and reset
                         if (AttachmentVM.IsProcessing && !AttachmentVM.Attachment.IsProcessed)
                         {
                             Debug.WriteLine("[AttachmentView] PHANTOM PROCESSING DETECTED - Resetting and triggering processing");
                             Debug.WriteLine("[AttachmentView] This indicates the attachment processor was never called or failed silently");
-                            
+
                             // Reset the processing state on UI thread
                             _dispatcher.TryEnqueue(() =>
                             {
                                 AttachmentVM.IsProcessing = false;
                             });
-                            
+
                             // Wait a moment for the UI update to complete
                             await Task.Delay(100);
-                            
+
                             // Trigger processing manually
                             Debug.WriteLine("[AttachmentView] Manually triggering AttachmentProcessor.AddAttachment");
                             AttachmentProcessor.AddAttachment(AttachmentVM.Attachment);
                         }
                     }
-                    
+
                     // If attachment isn't processed and no processing is happening, trigger processing
                     if (!AttachmentVM.Attachment.IsProcessed && !AttachmentVM.IsProcessing)
                     {
                         Debug.WriteLine("[AttachmentView] Attachment not processed and not processing - triggering processing pipeline");
                         AttachmentProcessor.AddAttachment(AttachmentVM.Attachment);
                     }
-                    
+
                     // Wait for processing to complete with timeout
                     int maxWaitTime = 300; // 300 * 500ms = 2.5 minutes timeout
                     int waitCounter = 0;
-                    
+
                     while ((AttachmentVM.IsProcessing || !AttachmentVM.Attachment.IsProcessed) && waitCounter < maxWaitTime)
                     {
                         Debug.WriteLine($"[AttachmentView] Waiting... IsProcessing: {AttachmentVM.IsProcessing}, IsProcessed: {AttachmentVM.Attachment.IsProcessed} ({waitCounter}/{maxWaitTime})");
                         Thread.Sleep(500);
                         waitCounter++;
                     }
-                    
+
                     if (waitCounter >= maxWaitTime)
                     {
                         Debug.WriteLine("[AttachmentView] ERROR: Transcription timed out after 2.5 minutes");
@@ -239,9 +235,9 @@ namespace Notes.Controls
                         });
                         return;
                     }
-                    
+
                     Debug.WriteLine("[AttachmentView] Processing completed, loading transcription file...");
-                    
+
                     if (string.IsNullOrEmpty(AttachmentVM.Attachment.FilenameForText))
                     {
                         Debug.WriteLine("[AttachmentView] ERROR: No transcription file available after processing");
@@ -252,20 +248,20 @@ namespace Notes.Controls
                         });
                         return;
                     }
-                    
+
                     var transcriptsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
                     StorageFile transcriptFile = await transcriptsFolder.GetFileAsync(AttachmentVM.Attachment.FilenameForText);
                     string rawTranscription = File.ReadAllText(transcriptFile.Path);
-                    
+
                     Debug.WriteLine($"[AttachmentView] Transcription loaded: {rawTranscription.Length} characters");
-                    
+
                     _dispatcher.TryEnqueue(() =>
                     {
                         transcriptLoadingProgressRing.IsActive = false;
                         var transcripts = WhisperUtils.ProcessTranscriptionWithTimestamps(rawTranscription);
-                        
+
                         Debug.WriteLine($"[AttachmentView] Processed {transcripts.Count} transcription blocks");
-                        
+
                         foreach (var t in transcripts)
                         {
                             TranscriptionBlocks.Add(new TranscriptionBlock(t.Text, t.Start, t.End));
@@ -287,7 +283,7 @@ namespace Notes.Controls
                     Debug.WriteLine($"[AttachmentView] ERROR: Transcription loading failed: {ex.Message}");
                     Debug.WriteLine($"[AttachmentView] Exception details: {ex}");
                     Debug.WriteLine($"[AttachmentView] Stack trace: {ex.StackTrace}");
-                    
+
                     _dispatcher.TryEnqueue(() =>
                     {
                         transcriptLoadingProgressRing.IsActive = false;
@@ -303,7 +299,7 @@ namespace Notes.Controls
             {
                 _timer = new Timer(CheckTimestampAndSelectTranscription, null, 0, 250);
             }
-            else if(_timer != null)
+            else if (_timer != null)
             {
                 _timer.Dispose();
             }
@@ -311,7 +307,8 @@ namespace Notes.Controls
 
         private void CheckTimestampAndSelectTranscription(object? state)
         {
-            _dispatcher.TryEnqueue(() => {
+            _dispatcher.TryEnqueue(() =>
+            {
                 TimeSpan currentPos = mediaPlayer.MediaPlayer.Position;
                 foreach (TranscriptionBlock block in TranscriptionBlocks)
                 {
@@ -324,15 +321,15 @@ namespace Notes.Controls
                         break;
                     }
                 }
-            });   
+            });
         }
 
         private void ResetMediaPlayer()
         {
-            if(_timer != null)
+            if (_timer != null)
             {
                 _timer.Dispose();
-            } 
+            }
             mediaPlayer.MediaPlayer.CurrentStateChanged -= MediaPlayer_CurrentStateChanged;
             mediaPlayer.MediaPlayer.Pause();
             mediaPlayer.Source = null;
@@ -352,7 +349,7 @@ namespace Notes.Controls
 
         private void ScrollTranscriptionToItem(TranscriptionBlock block)
         {
-            if(AutoScrollEnabled)
+            if (AutoScrollEnabled)
             {
                 transcriptBlocksListView.ScrollIntoView(block, ScrollIntoViewAlignment.Leading);
             }

@@ -1,9 +1,9 @@
 ﻿using NReco.VideoConverter;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using Windows.Storage;
-using System.Diagnostics;
 
 namespace Notes
 {
@@ -12,7 +12,7 @@ namespace Notes
         public static byte[] LoadAudioBytes(string file)
         {
             Debug.WriteLine($"[Utils.Audio] Loading audio bytes from: {file}");
-            
+
             if (string.IsNullOrEmpty(file))
             {
                 Debug.WriteLine("[Utils.Audio] ERROR: File path is null or empty");
@@ -29,7 +29,7 @@ namespace Notes
             {
                 var fileInfo = new FileInfo(file);
                 Debug.WriteLine($"[Utils.Audio] Input file size: {fileInfo.Length} bytes");
-                
+
                 var extension = Path.GetExtension(file).Substring(1);
                 Debug.WriteLine($"[Utils.Audio] File extension: {extension}");
 
@@ -37,7 +37,7 @@ namespace Notes
                 var output = new MemoryStream();
 
                 Debug.WriteLine("[Utils.Audio] Starting audio conversion to PCM...");
-                
+
                 // Convert to PCM
                 ffmpeg.ConvertMedia(inputFile: file,
                                     inputFormat: null,
@@ -51,11 +51,11 @@ namespace Notes
                                         // Convert to mono
                                         CustomOutputArgs = "-ac 1"
                                     });
-                
+
                 var result = output.ToArray();
                 Debug.WriteLine($"[Utils.Audio] Conversion completed - Output: {result.Length} bytes");
                 Debug.WriteLine($"[Utils.Audio] Audio duration: {(result.Length / 2.0 / 16000):F2} seconds");
-                
+
                 return result;
             }
             catch (Exception ex)
@@ -71,7 +71,7 @@ namespace Notes
         {
             Debug.WriteLine($"[Utils.Audio] Extracting audio segment from: {inPath}");
             Debug.WriteLine($"[Utils.Audio] Start: {startTimeInSeconds:F2}s, Duration: {segmentDurationInSeconds:F2}s");
-            
+
             if (string.IsNullOrEmpty(inPath))
             {
                 Debug.WriteLine("[Utils.Audio] ERROR: Input path is null or empty");
@@ -116,7 +116,7 @@ namespace Notes
 
                 var buffer = output.ToArray();
                 Debug.WriteLine($"[Utils.Audio] Extracted buffer size: {buffer.Length} bytes");
-                
+
                 if (buffer.Length == 0)
                 {
                     Debug.WriteLine("[Utils.Audio] WARNING: No data extracted from audio segment");
@@ -153,7 +153,7 @@ namespace Notes
         public static async Task<StorageFile> SaveAudioFileAsWav(StorageFile file, StorageFolder folderToSaveTo)
         {
             Debug.WriteLine($"[Utils.Audio] Converting audio file to WAV: {file?.Path ?? "null"}");
-            
+
             if (file == null)
             {
                 Debug.WriteLine("[Utils.Audio] ERROR: Input file is null");
@@ -171,13 +171,13 @@ namespace Notes
                 var ffmpeg = new FFMpegConverter();
                 var newFilePath = $"{folderToSaveTo.Path}\\{file.DisplayName}.wav";
                 Debug.WriteLine($"[Utils.Audio] Converting to: {newFilePath}");
-                
+
                 ffmpeg.ConvertMedia(file.Path, newFilePath, "wav");
                 Debug.WriteLine($"[Utils.Audio] Conversion completed");
-                
+
                 var newFile = await StorageFile.GetFileFromPathAsync(newFilePath);
                 Debug.WriteLine($"[Utils.Audio] WAV file created: {newFile.Path}");
-                
+
                 return newFile;
             }
             catch (Exception ex)

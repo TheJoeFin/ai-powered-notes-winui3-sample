@@ -1,10 +1,9 @@
-﻿using Microsoft.VisualBasic;
+﻿using Notes.AI.Embeddings;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Notes.AI.Embeddings;
 using Windows.Storage;
 
 namespace Notes

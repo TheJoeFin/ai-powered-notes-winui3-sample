@@ -1,17 +1,16 @@
-﻿using System;
+﻿using Notes.AI.Embeddings;
+using Notes.AI.TextRecognition;
+using Notes.AI.VoiceRecognition;
+using Notes.Models;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Threading.Tasks;
-using Notes.AI.Embeddings;
-using Notes.Models;
-using Notes.AI.VoiceRecognition;
+using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Streams;
-using Windows.Graphics.Imaging;
-using Notes.AI.TextRecognition;
-using System.Text.Json;
 
 namespace Notes
 {
@@ -32,13 +31,13 @@ namespace Notes
             Debug.WriteLine($"[AttachmentProcessor] IsProcessed: {attachment?.IsProcessed ?? false}");
             Debug.WriteLine($"[AttachmentProcessor] Current queue size: {_toBeProcessed?.Count ?? -1}");
             Debug.WriteLine($"[AttachmentProcessor] Currently processing: {_isProcessing}");
-            
+
             if (attachment == null)
             {
                 Debug.WriteLine("[AttachmentProcessor] ERROR: Attachment is null!");
                 return;
             }
-            
+
             _toBeProcessed.Add(attachment);
             Debug.WriteLine($"[AttachmentProcessor] Added to queue. New queue size: {_toBeProcessed.Count}");
 
@@ -66,7 +65,7 @@ namespace Notes
             {
                 Debug.WriteLine("[AttachmentProcessor] Already processing, attachment queued");
             }
-            
+
             Debug.WriteLine("===== [AttachmentProcessor] AddAttachment EXIT =====");
         }
 
@@ -74,13 +73,13 @@ namespace Notes
         {
             Debug.WriteLine("===== [AttachmentProcessor] Process() ENTRY =====");
             Debug.WriteLine($"[AttachmentProcessor] URGENT: Processing queue with {_toBeProcessed?.Count ?? -1} items");
-            
+
             if (_toBeProcessed == null)
             {
                 Debug.WriteLine("[AttachmentProcessor] CRITICAL ERROR: _toBeProcessed is null!");
                 return;
             }
-            
+
             while (_toBeProcessed.Count > 0)
             {
                 var attachment = _toBeProcessed[0];
@@ -121,14 +120,14 @@ namespace Notes
                     Debug.WriteLine($"[AttachmentProcessor] Stack trace: {ex.StackTrace}");
                 }
             }
-            
+
             Debug.WriteLine("===== [AttachmentProcessor] Process() EXIT =====");
         }
 
         private static async Task ProcessImage(Models.Attachment attachment, EventHandler<float>? progress = null)
         {
             Debug.WriteLine($"[AttachmentProcessor] Starting image processing for: {attachment.Filename}");
-            
+
             try
             {
                 // get softwarebitmap from file
@@ -166,7 +165,7 @@ namespace Notes
                             progress.Invoke("Indexing image", 0.5f + (p / 2));
                         }
                     });
-                    
+
                     attachment.IsProcessed = true;
                     InvokeAttachmentProcessedComplete(attachment);
                     Debug.WriteLine($"[AttachmentProcessor] Image processing completed for: {attachment.Filename}");
@@ -187,7 +186,7 @@ namespace Notes
         private static async Task ProcessAudio(Attachment attachment)
         {
             Debug.WriteLine($"[AttachmentProcessor] Starting audio processing for: {attachment.Filename}");
-            
+
             await Task.Run(async () =>
             {
                 try
@@ -241,7 +240,7 @@ namespace Notes
                                     });
                                 }
                             });
-                            
+
                             Debug.WriteLine("[AttachmentProcessor] Semantic indexing completed");
                         }
                         catch (Exception indexingEx)
@@ -278,7 +277,7 @@ namespace Notes
         private async static Task<string> SaveTextToFileAsync(string text, string filename)
         {
             Debug.WriteLine($"[AttachmentProcessor] Saving text to file: {filename}");
-            
+
             try
             {
                 var stateAttachmentsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
@@ -297,7 +296,7 @@ namespace Notes
         private static void InvokeAttachmentProcessedComplete(Attachment attachment)
         {
             Debug.WriteLine($"[AttachmentProcessor] Attachment processing completed: {attachment.Filename}");
-            
+
             if (AttachmentProcessed != null)
             {
                 AttachmentProcessed.Invoke(null, new AttachmentProcessedEventArgs

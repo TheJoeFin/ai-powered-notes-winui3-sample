@@ -1,10 +1,10 @@
-﻿using System;
+﻿using Microsoft.UI.Xaml.Media.Imaging;
+using NAudio.Wave;
+using NAudio.WaveFormRenderer;
+using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
-using Microsoft.UI.Xaml.Media.Imaging;
-using NAudio.Wave;
-using NAudio.WaveFormRenderer;
 using Windows.Storage;
 
 namespace Notes
@@ -18,7 +18,7 @@ namespace Notes
             Sampling,
             Average
         }
-        
+
         private static Image Render(StorageFile audioFile, int height, int width, PeakProvider peakProvider)
         {
             WaveFormRendererSettings settings = new StandardWaveFormRendererSettings();
@@ -54,26 +54,26 @@ namespace Notes
 
         public static async System.Threading.Tasks.Task<BitmapImage> GetWaveformImage(StorageFile audioFile)
         {
-                StorageFile imageFile;
-                StorageFolder attachmentsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
-                string waveformFileName = Path.ChangeExtension(Path.GetFileName(audioFile.Path) + "-waveform", ".png");
-                try
+            StorageFile imageFile;
+            StorageFolder attachmentsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
+            string waveformFileName = Path.ChangeExtension(Path.GetFileName(audioFile.Path) + "-waveform", ".png");
+            try
+            {
+                imageFile = await attachmentsFolder.CreateFileAsync(waveformFileName, CreationCollisionOption.FailIfExists);
+                using (var stream = await imageFile.OpenStreamForWriteAsync())
                 {
-                    imageFile = await attachmentsFolder.CreateFileAsync(waveformFileName, CreationCollisionOption.FailIfExists);
-                    using (var stream = await imageFile.OpenStreamForWriteAsync())
-                    {
-                        System.Drawing.Image image = Render(audioFile, 400, 800, PeakProvider.Average);
-                        image.Save(stream, ImageFormat.Png);
-                    }
+                    System.Drawing.Image image = Render(audioFile, 400, 800, PeakProvider.Average);
+                    image.Save(stream, ImageFormat.Png);
                 }
-                catch
-                {
-                    imageFile = await attachmentsFolder.GetFileAsync(waveformFileName);
-                }
+            }
+            catch
+            {
+                imageFile = await attachmentsFolder.GetFileAsync(waveformFileName);
+            }
 
 
-                Uri uri = new Uri(imageFile.Path);
-                BitmapImage bi = new BitmapImage(uri);
+            Uri uri = new Uri(imageFile.Path);
+            BitmapImage bi = new BitmapImage(uri);
 
             return bi;
         }

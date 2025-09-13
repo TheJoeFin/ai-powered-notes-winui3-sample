@@ -1,33 +1,33 @@
-﻿using Microsoft.ML.OnnxRuntime.Tensors;
-using Microsoft.ML.OnnxRuntime;
+﻿using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
+using Notes.AI.VoiceRecognition.VoiceActivity;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Windows.Storage;
-using Notes.AI.VoiceRecognition.VoiceActivity;
-using System.Diagnostics;
 
 namespace Notes.AI.VoiceRecognition
 {
     public static class Whisper
     {
         private static InferenceSession? _inferenceSession;
-        
+
         private static InferenceSession InitializeModel()
         {
             Debug.WriteLine("[Whisper] Initializing Whisper model...");
-            
+
             try
             {
                 var modelPath = $@"{AppDomain.CurrentDomain.BaseDirectory}onnx-models\whisper\whisper_medium_int8_cpu_ort_1.18.0.onnx";
                 Debug.WriteLine($"[Whisper] Model path: {modelPath}");
-                
+
                 if (!System.IO.File.Exists(modelPath))
                 {
                     Debug.WriteLine($"[Whisper] ERROR: Model file not found at: {modelPath}");
                     throw new System.IO.FileNotFoundException($"Whisper model file not found at: {modelPath}");
                 }
-                
+
                 Debug.WriteLine($"[Whisper] Model file exists, size: {new System.IO.FileInfo(modelPath).Length} bytes");
 
                 SessionOptions options = new SessionOptions();
@@ -38,7 +38,7 @@ namespace Notes.AI.VoiceRecognition
 
                 var session = new InferenceSession(modelPath, options);
                 Debug.WriteLine("[Whisper] InferenceSession created successfully");
-                
+
                 // Log model inputs and outputs
                 Debug.WriteLine($"[Whisper] Model inputs: {string.Join(", ", session.InputMetadata.Keys)}");
                 Debug.WriteLine($"[Whisper] Model outputs: {string.Join(", ", session.OutputMetadata.Keys)}");
@@ -56,7 +56,7 @@ namespace Notes.AI.VoiceRecognition
         private static async Task<List<WhisperTranscribedChunk>> TranscribeChunkAsync(float[] pcmAudioData, string inputLanguage, WhisperTaskType taskType, int offsetSeconds = 30)
         {
             Debug.WriteLine($"[Whisper] Starting chunk transcription - Audio length: {pcmAudioData?.Length ?? 0} samples, Language: {inputLanguage}, Offset: {offsetSeconds}s");
-            
+
             try
             {
                 if (_inferenceSession == null)
@@ -78,7 +78,7 @@ namespace Notes.AI.VoiceRecognition
                 int task = (int)taskType;
                 int langCode = WhisperUtils.GetLangId(inputLanguage);
                 Debug.WriteLine($"[Whisper] Language code: {langCode}, Task: {task}");
-                
+
                 var decoderInputIds = new int[] { 50258, langCode, task };
                 var langAndModeTensor = new DenseTensor<int>(decoderInputIds, [1, 3]);
 
@@ -99,13 +99,13 @@ namespace Notes.AI.VoiceRecognition
 
                 using var results = _inferenceSession.Run(inputs);
                 Debug.WriteLine($"[Whisper] Model inference completed, outputs: {results.Count}");
-                
+
                 string result = results[0].AsTensor<string>().GetValue(0);
                 Debug.WriteLine($"[Whisper] Raw transcription result: '{result}'");
-                
+
                 var transcribedChunks = WhisperUtils.ProcessTranscriptionWithTimestamps(result, offsetSeconds);
                 Debug.WriteLine($"[Whisper] Processed transcription into {transcribedChunks.Count} chunks");
-                
+
                 return transcribedChunks;
             }
             catch (Exception ex)
@@ -121,7 +121,7 @@ namespace Notes.AI.VoiceRecognition
         public async static Task<List<WhisperTranscribedChunk>> TranscribeAsync(StorageFile audioFile, EventHandler<float>? progress = null)
         {
             Debug.WriteLine($"[Whisper] Starting transcription of audio file: {audioFile?.Path ?? "null"}");
-            
+
             if (audioFile == null)
             {
                 Debug.WriteLine("[Whisper] ERROR: Audio file is null");
@@ -136,11 +136,11 @@ namespace Notes.AI.VoiceRecognition
                 Debug.WriteLine("[Whisper] Loading audio bytes...");
 
                 var audioBytes = Utils.LoadAudioBytes(audioFile.Path);
-                
+
                 sw.Stop();
                 Debug.WriteLine($"[Whisper] Loading took {sw.ElapsedMilliseconds} ms");
                 Debug.WriteLine($"[Whisper] Audio bytes loaded: {audioBytes?.Length ?? 0} bytes");
-                
+
                 if (audioBytes == null || audioBytes.Length == 0)
                 {
                     Debug.WriteLine("[Whisper] ERROR: No audio bytes loaded");
@@ -175,7 +175,7 @@ namespace Notes.AI.VoiceRecognition
                         if (audioSegment != null && audioSegment.Length > 0)
                         {
                             var transcription = await TranscribeChunkAsync(audioSegment, "en", WhisperTaskType.Transcribe, (int)chunk.Start);
-                            
+
                             if (transcription != null && transcription.Count > 0)
                             {
                                 transcribedChunks.AddRange(transcription);

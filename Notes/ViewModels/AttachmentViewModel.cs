@@ -1,6 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
-using System.Diagnostics;
 using Notes.Models;
+using System.Diagnostics;
 
 namespace Notes.ViewModels
 {
@@ -44,5 +44,5 @@ namespace Notes.ViewModels
         }
     }
 
-    
+
 }

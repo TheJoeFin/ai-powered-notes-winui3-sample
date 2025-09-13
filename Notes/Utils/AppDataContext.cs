@@ -1,8 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using System.ComponentModel.DataAnnotations.Schema;
-using System.Threading.Tasks;
 using Notes.AI.Embeddings;
 using Notes.Models;
+using System.Threading.Tasks;
 
 namespace Notes
 {

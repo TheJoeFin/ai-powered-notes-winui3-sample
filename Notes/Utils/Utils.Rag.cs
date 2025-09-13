@@ -1,8 +1,8 @@
-﻿using System.Collections.Generic;
+﻿using Notes.AI;
+using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
-using Notes.AI;
 
 namespace Notes
 {

@@ -1,13 +1,13 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Notes.AI;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Notes.AI;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -45,14 +45,14 @@ namespace Notes.Controls
             await Task.Run(async () =>
             {
                 var firstPartial = true;
-                
+
                 await foreach (var partialResult in App.ChatClient.SummarizeTextAsync(text, token))
                 {
                     if (token.IsCancellationRequested)
                     {
                         break;
                     }
-                    
+
                     DispatcherQueue.TryEnqueue(() =>
                     {
                         if (firstPartial)
@@ -158,7 +158,7 @@ namespace Notes.Controls
                 if (textBox.Text.Length > 0)
                 {
                     HandleRagQuestion(textBox.Text);
-                    
+
                 }
             }
         }

@@ -1,9 +1,9 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
-using System.Threading.Tasks;
-using System;
 using System.Linq;
 using System.Numerics.Tensors;
+using System.Threading.Tasks;
 
 namespace Notes.AI.Embeddings
 {
@@ -193,7 +193,7 @@ namespace Notes.AI.Embeddings
                 {
                     var chunkBatch = chunks.Skip(i).Take(chunkBatchSize).ToList();
                     var vectors = await Embeddings.Instance.GetEmbeddingsAsync(chunkBatch.Select(c => c.Text).ToArray()).ConfigureAwait(false);
-                    
+
                     for (int j = 0; j < chunkBatch.Count; j++)
                     {
                         chunkBatch[j].Vectors = vectors[j];

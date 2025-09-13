@@ -2,18 +2,18 @@
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
+using Notes.AI;
+using Notes.Models;
+using Notes.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Notes.Models;
-using Notes.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
-using Notes.AI;
 
 // The Blank Page item template is documented at https://go.microsoft.com/fwlink/?LinkId=234238
 
@@ -55,7 +55,7 @@ namespace Notes.Pages
                 ContentsRichEditBox.Focus(FocusState.Programmatic);
             }
         }
-        
+
         private void ContentsRichEditBox_Loaded(object sender, RoutedEventArgs e)
         {
             ContentsRichEditBox.SelectionFlyout.Opening += Menu_Opening;

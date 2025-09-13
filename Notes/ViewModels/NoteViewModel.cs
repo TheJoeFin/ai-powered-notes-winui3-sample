@@ -1,17 +1,16 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Notes.AI;
+using Notes.AI.Embeddings;
+using Notes.Models;
 using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
-using Notes.AI.Embeddings;
-using Notes.Models;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
-using System.Collections.Generic;
-using Notes.AI;
 
 namespace Notes.ViewModels
 {
@@ -110,7 +109,7 @@ namespace Notes.ViewModels
             Debug.WriteLine($"[NoteViewModel] Adding attachment: {file?.Name ?? "NULL FILE"}");
             Debug.WriteLine($"[NoteViewModel] File path: {file?.Path ?? "NULL PATH"}");
             Debug.WriteLine($"[NoteViewModel] File type: {file?.FileType ?? "NULL TYPE"}");
-            
+
             var attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
             bool shouldCopyFile = true;
 
@@ -122,7 +121,7 @@ namespace Notes.ViewModels
 
             Debug.WriteLine($"[NoteViewModel] Created attachment object");
 
-            if (new string[] { ".png", ".jpg", ".jpeg"}.Contains(file.FileType))
+            if (new string[] { ".png", ".jpg", ".jpeg" }.Contains(file.FileType))
             {
                 attachment.Type = NoteAttachmentType.Image;
                 Debug.WriteLine($"[NoteViewModel] Attachment type: Image");
@@ -131,7 +130,7 @@ namespace Notes.ViewModels
             {
                 attachment.Type = NoteAttachmentType.Audio;
                 Debug.WriteLine($"[NoteViewModel] Attachment type: Audio");
-                
+
                 // Only convert to WAV if it's not already a WAV file, or if it's not already in the attachments folder
                 if (file.FileType != ".wav" || !file.Path.StartsWith(attachmentsFolder.Path))
                 {
@@ -177,9 +176,9 @@ namespace Notes.ViewModels
 
             Debug.WriteLine($"[NoteViewModel] CALLING AttachmentProcessor.AddAttachment: {attachment.Filename}");
             Debug.WriteLine($"[NoteViewModel] Attachment ID: {attachment.Id}, Type: {attachment.Type}, IsProcessed: {attachment.IsProcessed}");
-            
+
             AttachmentProcessor.AddAttachment(attachment);
-            
+
             Debug.WriteLine("=== [NoteViewModel] AddAttachmentAsync EXIT ===");
         }
 

@@ -44,7 +44,7 @@ namespace Notes
 
             // use genai model
             ChatClient = await GenAIModel.CreateAsync(
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "onnx-models", "genai-model"), 
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "onnx-models", "genai-model"),
                 new LlmPromptTemplate
                 {
                     System = "<|system|>\n{{CONTENT}}<|end|>\n",

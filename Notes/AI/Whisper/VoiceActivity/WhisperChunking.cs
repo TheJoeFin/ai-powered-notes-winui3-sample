@@ -24,7 +24,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
 
         public double Length => End - Start;
     }
-    
+
     public static class WhisperChunking
     {
         private static int SAMPLE_RATE = 16000;
@@ -40,7 +40,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
         public static List<WhisperChunk> SmartChunking(byte[] audioBytes)
         {
             Debug.WriteLine($"[WhisperChunking] Starting smart chunking - Audio bytes: {audioBytes?.Length ?? 0}");
-            
+
             if (audioBytes == null || audioBytes.Length == 0)
             {
                 Debug.WriteLine("[WhisperChunking] ERROR: Audio bytes are null or empty");
@@ -60,10 +60,10 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
                 int bytesPerSample = 2;
                 int bytesPerWindow = WINDOW_SIZE_SAMPLES * bytesPerSample;
                 Debug.WriteLine($"[WhisperChunking] Window size: {WINDOW_SIZE_SAMPLES} samples ({bytesPerWindow} bytes)");
-                
+
                 var result = new List<DetectionResult>();
                 var sw = Stopwatch.StartNew();
-                
+
                 int totalWindows = 0;
                 for (int offset = 0; offset + bytesPerWindow <= audioBytes.Length; offset += bytesPerWindow)
                 {
@@ -74,7 +74,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
                     try
                     {
                         var detectResult = vadDetector.Apply(data, true);
-                        
+
                         if (detectResult.Count > 0)
                         {
                             Debug.WriteLine($"[WhisperChunking] Window {totalWindows}: VAD detected {detectResult.Count} events");
@@ -89,24 +89,24 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
                     {
                         Debug.WriteLine($"[WhisperChunking] ERROR: Error applying VAD detector at offset {offset}: {e.Message}");
                         Debug.WriteLine($"[WhisperChunking] Exception details: {e}");
-                        
+
                         // If VAD fails, fallback to simple time-based chunking
                         Debug.WriteLine("[WhisperChunking] VAD failed, falling back to time-based chunking");
                         vadDetector?.Close();
                         return CreateTimeBasedChunks(totalSeconds, MAX_CHUNK_S);
                     }
                 }
-                
+
                 sw.Stop();
                 Debug.WriteLine($"[WhisperChunking] VAD detection took {sw.ElapsedMilliseconds} ms");
                 Debug.WriteLine($"[WhisperChunking] Processed {totalWindows} windows, detected {result.Count} VAD events");
-                
+
                 vadDetector.Close();
                 Debug.WriteLine("[WhisperChunking] VAD detector closed");
-                
+
                 var stamps = GetTimeStamps(result, totalSeconds, MAX_CHUNK_S, MIN_CHUNK_S);
                 Debug.WriteLine($"[WhisperChunking] Generated {stamps?.Count ?? 0} time-based chunks");
-                
+
                 return stamps ?? new List<WhisperChunk>();
             }
             catch (Exception ex)
@@ -114,7 +114,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
                 Debug.WriteLine($"[WhisperChunking] ERROR: VAD-based chunking failed: {ex.Message}");
                 Debug.WriteLine($"[WhisperChunking] Exception details: {ex}");
                 Debug.WriteLine("[WhisperChunking] Falling back to simple time-based chunking");
-                
+
                 // Fallback to simple time-based chunking
                 return CreateTimeBasedChunks(totalSeconds, MAX_CHUNK_S);
             }
@@ -123,9 +123,9 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
         private static List<WhisperChunk> CreateTimeBasedChunks(double totalSeconds, double maxChunkLength)
         {
             Debug.WriteLine($"[WhisperChunking] Creating time-based chunks for {totalSeconds:F2}s audio with {maxChunkLength}s max chunk length");
-            
+
             var chunks = new List<WhisperChunk>();
-            
+
             if (totalSeconds <= maxChunkLength)
             {
                 Debug.WriteLine($"[WhisperChunking] Short audio, creating single chunk: 0.00s - {totalSeconds:F2}s");
@@ -135,7 +135,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
             {
                 double currentStart = 0;
                 int chunkNumber = 1;
-                
+
                 while (currentStart < totalSeconds)
                 {
                     double chunkEnd = Math.Min(currentStart + maxChunkLength, totalSeconds);
@@ -145,7 +145,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
                     chunkNumber++;
                 }
             }
-            
+
             Debug.WriteLine($"[WhisperChunking] Created {chunks.Count} time-based chunks");
             return chunks;
         }
@@ -153,7 +153,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
         private static List<WhisperChunk> GetTimeStamps(List<DetectionResult> voiceAreas, double totalSeconds, double maxChunkLength, double minChunkLength)
         {
             Debug.WriteLine($"[WhisperChunking] Creating timestamps from {voiceAreas?.Count ?? 0} voice areas, total duration: {totalSeconds:F2}s");
-            
+
             try
             {
                 if (totalSeconds <= maxChunkLength)
@@ -175,7 +175,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
 
                 double nextChunkStart = 0.0;
                 int chunkNumber = 1;
-                
+
                 while (nextChunkStart < totalSeconds)
                 {
                     double idealChunkEnd = nextChunkStart + maxChunkLength;
@@ -201,7 +201,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
                 Debug.WriteLine($"[WhisperChunking] Created {chunks.Count} initial chunks");
                 var mergedChunks = MergeSmallChunks(chunks, maxChunkLength, minChunkLength);
                 Debug.WriteLine($"[WhisperChunking] After merging: {mergedChunks?.Count ?? 0} final chunks");
-                
+
                 return mergedChunks;
             }
             catch (Exception ex)
@@ -215,7 +215,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
         private static List<WhisperChunk> MergeSmallChunks(List<WhisperChunk> chunks, double maxChunkLength, double minChunkLength)
         {
             Debug.WriteLine($"[WhisperChunking] Merging small chunks - Input: {chunks?.Count ?? 0} chunks");
-            
+
             if (chunks == null || chunks.Count == 0)
             {
                 Debug.WriteLine("[WhisperChunking] No chunks to merge");

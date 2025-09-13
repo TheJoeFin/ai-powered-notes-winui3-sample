@@ -7,13 +7,12 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Numerics;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace Notes.AI.Embeddings
 {
-    public partial class Embeddings :IDisposable
+    public partial class Embeddings : IDisposable
     {
 
         [GeneratedRegex(@"[\u0000-\u001F\u007F-\uFFFF]")]

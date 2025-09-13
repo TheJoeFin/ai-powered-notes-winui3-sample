@@ -1,10 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Windows.Media.Capture;
 using Windows.Media.MediaProperties;
 using Windows.Storage;
-using Windows.Foundation;
-using System.Diagnostics;
 
 namespace Notes.Services
 {
@@ -55,7 +54,7 @@ namespace Notes.Services
                 var attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
                 var fileName = $"recording_{DateTime.Now:yyyyMMdd_HHmmss}.wav";
                 Debug.WriteLine($"[AudioRecordingService] Recording to file: {fileName}");
-                
+
                 _recordingFile = await attachmentsFolder.CreateFileAsync(fileName, CreationCollisionOption.GenerateUniqueName);
                 Debug.WriteLine($"[AudioRecordingService] Recording file created at: {_recordingFile.Path}");
 

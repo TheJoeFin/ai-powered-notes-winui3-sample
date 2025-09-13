@@ -1,12 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using Notes.Models;
+using System;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Text.Json;
 using System.Threading.Tasks;
-using Notes.Models;
 using Windows.Storage;
 
 namespace Notes.ViewModels
@@ -51,7 +47,7 @@ namespace Notes.ViewModels
 
             StorageFolder notesFolder = await Utils.GetLocalFolderAsync();
             var files = await notesFolder.GetFilesAsync();
-            var filenames = files.ToDictionary(f => f.Name, f=> f);
+            var filenames = files.ToDictionary(f => f.Name, f => f);
 
             foreach (var note in savedNotes)
             {

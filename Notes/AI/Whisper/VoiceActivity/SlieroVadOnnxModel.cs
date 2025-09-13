@@ -19,7 +19,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
         public SlieroVadOnnxModel()
         {
             Debug.WriteLine("[SlieroVadOnnxModel] Initializing Silero VAD model...");
-            
+
             try
             {
                 var modelPath = $@"{AppDomain.CurrentDomain.BaseDirectory}onnx-models\whisper\silero_vad.onnx";
@@ -30,7 +30,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
                     Debug.WriteLine($"[SlieroVadOnnxModel] ERROR: Model file not found at: {modelPath}");
                     throw new System.IO.FileNotFoundException($"Silero VAD model file not found at: {modelPath}");
                 }
-                
+
                 Debug.WriteLine($"[SlieroVadOnnxModel] Model file exists, size: {new System.IO.FileInfo(modelPath).Length} bytes");
 
                 var options = new SessionOptions();
@@ -41,11 +41,11 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
 
                 session = new InferenceSession(modelPath, options);
                 Debug.WriteLine("[SlieroVadOnnxModel] InferenceSession created successfully");
-                
+
                 // Log model inputs and outputs
                 Debug.WriteLine($"[SlieroVadOnnxModel] Model inputs: {string.Join(", ", session.InputMetadata.Keys)}");
                 Debug.WriteLine($"[SlieroVadOnnxModel] Model outputs: {string.Join(", ", session.OutputMetadata.Keys)}");
-                
+
                 ResetStates();
                 Debug.WriteLine("[SlieroVadOnnxModel] Model initialized successfully");
             }
@@ -60,7 +60,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
         public void ResetStates()
         {
             Debug.WriteLine("[SlieroVadOnnxModel] Resetting model states...");
-            
+
             try
             {
                 h = new DenseTensor<float>(new[] { 2, 1, 64 });
@@ -98,7 +98,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
         private ValidationResult ValidateInput(float[][] x, int sr)
         {
             Debug.WriteLine($"[SlieroVadOnnxModel] Validating input - Dimensions: {x?.Length ?? 0}, Sample rate: {sr}");
-            
+
             try
             {
                 if (x.Length == 1)
@@ -145,7 +145,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
         public float[] Call(float[][] x, int sr)
         {
             Debug.WriteLine($"[SlieroVadOnnxModel] Model call - Input dimensions: {x?.Length ?? 0}, Sample rate: {sr}");
-            
+
             try
             {
                 var result = ValidateInput(x, sr);
@@ -208,7 +208,7 @@ namespace Notes.AI.VoiceRecognition.VoiceActivity
                 using (var results = session.Run(inputs))
                 {
                     var output = results.First().AsEnumerable<float>().ToArray();
-                    
+
                     // Update state tensors from outputs if available
                     if (results.Count > 1)
                     {
