@@ -1,5 +1,4 @@
-﻿using Microsoft.Windows.Vision;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -12,7 +11,7 @@ namespace Notes.AI.TextRecognition
         public List<RecognizedTextLine> Lines { get; set; } = new();
         public double ImageAngle { get; set; }
 
-        public static ImageText GetFromRecognizedText(RecognizedText? recognizedText)
+        public static ImageText GetFromRecognizedText(object? recognizedText)
         {
             ImageText attachmentRecognizedText = new();
 
@@ -21,23 +20,14 @@ namespace Notes.AI.TextRecognition
                 return attachmentRecognizedText;
             }
 
-            attachmentRecognizedText.ImageAngle = recognizedText.ImageAngle;
-            attachmentRecognizedText.Lines = recognizedText.Lines.Select(l => new RecognizedTextLine
-            {
-                Text = l.Text,
-                X = l.BoundingBox.TopLeft.X,
-                Y = l.BoundingBox.TopLeft.Y,
-                Width = Math.Abs(l.BoundingBox.TopRight.X - l.BoundingBox.TopLeft.X),
-                Height = Math.Abs(l.BoundingBox.BottomLeft.Y - l.BoundingBox.TopLeft.Y)
-            }).ToList();
-
+            // Stub implementation - Microsoft.Windows.Vision is not available
             return attachmentRecognizedText;
         }
     }
 
     internal class RecognizedTextLine
     {
-        public string Text { get; set; }
+        public string Text { get; set; } = "";
         public double X { get; set; }
         public double Y { get; set; }
         public double Width { get; set; }

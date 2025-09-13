@@ -97,7 +97,7 @@ internal class GenAIModel : IChatClient
         _ogaHandle?.Dispose();
     }
 
-    private string GetPrompt(IList<ChatMessage> history)
+    private string GetPrompt(IEnumerable<ChatMessage> history)
     {
         if (!history.Any())
         {
@@ -113,9 +113,11 @@ internal class GenAIModel : IChatClient
 
         string systemMsgWithoutSystemTemplate = string.Empty;
 
-        for (var i = 0; i < history.Count; i++)
+        var historyList = history.ToList(); // Convert to list for indexing
+
+        for (var i = 0; i < historyList.Count; i++)
         {
-            var message = history[i];
+            var message = historyList[i];
             if (message.Role == ChatRole.System)
             {
                 // ignore system prompts that aren't at the beginning
@@ -160,11 +162,11 @@ internal class GenAIModel : IChatClient
         return prompt.ToString();
     }
 
-    public Task<ChatResponse> GetResponseAsync(IList<ChatMessage> chatMessages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+    public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> chatMessages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
         GetStreamingResponseAsync(chatMessages, options, cancellationToken).ToChatResponseAsync(cancellationToken: cancellationToken);
 
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-        IList<ChatMessage> chatMessages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        IEnumerable<ChatMessage> chatMessages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var prompt = GetPrompt(chatMessages);
 
@@ -251,11 +253,8 @@ internal class GenAIModel : IChatClient
                 break;
             }
 
-            yield return new()
-            {
-                Role = ChatRole.Assistant,
-                Text = part,
-            };
+            var content = new TextContent(part);
+            yield return new ChatResponseUpdate(ChatRole.Assistant, part);
         }
     }
 
