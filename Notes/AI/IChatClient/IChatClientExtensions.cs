@@ -29,6 +29,26 @@ namespace Notes.AI
             return client.InferStreaming("", $"Summarize this text in three to five bullet points:\r {userText}", ct);
         }
 
+        public static IAsyncEnumerable<string> SummarizeAudioTranscriptAsync(this IChatClient client, string transcriptText, CancellationToken ct = default)
+        {
+            var systemMessage = "You are summarizing an audio transcript. Create a concise summary in 3-5 bullet points that captures the key topics and main points discussed. Focus on the actual content, not the transcript format.";
+            return client.InferStreaming(systemMessage, transcriptText, ct);
+        }
+
+        public static IAsyncEnumerable<string> ExtractTopicsAndTimestampsAsync(this IChatClient client, string transcriptText, CancellationToken ct = default)
+        {
+            var systemMessage = @"You are analyzing an audio transcript with timestamps in the format <|start|>text<|end|>. 
+Extract the main topics discussed and provide them with their corresponding timestamps in this exact format:
+""Topic Name (MM:SS) - Brief description""
+
+For example:
+""Meeting Discussion (2:15) - Project timeline and deliverables""
+""Budget Review (5:30) - Q3 expenses and allocation""
+
+Only include significant topics (3-7 topics maximum). Use the timestamp from when each topic starts being discussed.";
+            return client.InferStreaming(systemMessage, transcriptText, ct);
+        }
+
         public static IAsyncEnumerable<string> FixAndCleanUpTextAsync(this IChatClient client, string userText, CancellationToken ct = default)
         {
             var systemMessage = "Your job is to fix spelling, and clean up the text from the user. Only respond with the updated text. Do not explain anything.";
