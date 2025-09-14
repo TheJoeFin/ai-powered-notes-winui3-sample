@@ -166,7 +166,19 @@ namespace Notes
                         }
                     });
 
-                    attachment.IsProcessed = true;
+                    // Use dispatcher for UI thread safety
+                    if (MainWindow.Instance?.DispatcherQueue != null)
+                    {
+                        MainWindow.Instance.DispatcherQueue.TryEnqueue(() =>
+                        {
+                            attachment.IsProcessed = true;
+                        });
+                    }
+                    else
+                    {
+                        attachment.IsProcessed = true;
+                    }
+                    
                     InvokeAttachmentProcessedComplete(attachment);
                     Debug.WriteLine($"[AttachmentProcessor] Image processing completed for: {attachment.Filename}");
 
@@ -232,12 +244,43 @@ namespace Notes
                                 Debug.WriteLine($"[AttachmentProcessor] Indexing progress: {p * 100:F1}%");
                                 if (AttachmentProcessed != null)
                                 {
-                                    AttachmentProcessed.Invoke(null, new AttachmentProcessedEventArgs
+                                    // Use dispatcher for thread-safe UI updates
+                                    if (MainWindow.Instance?.DispatcherQueue != null)
                                     {
-                                        AttachmentId = attachment.Id,
-                                        Progress = 0.5f + p / 2,
-                                        ProcessingStep = "Indexing audio transcript"
-                                    });
+                                        MainWindow.Instance.DispatcherQueue.TryEnqueue(() =>
+                                        {
+                                            try
+                                            {
+                                                AttachmentProcessed.Invoke(null, new AttachmentProcessedEventArgs
+                                                {
+                                                    AttachmentId = attachment.Id,
+                                                    Progress = 0.5f + p / 2,
+                                                    ProcessingStep = "Indexing audio transcript"
+                                                });
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                Debug.WriteLine($"[AttachmentProcessor] ERROR: Failed to invoke progress event: {ex.Message}");
+                                            }
+                                        });
+                                    }
+                                    else
+                                    {
+                                        // Fallback for direct invocation
+                                        try
+                                        {
+                                            AttachmentProcessed.Invoke(null, new AttachmentProcessedEventArgs
+                                            {
+                                                AttachmentId = attachment.Id,
+                                                Progress = 0.5f + p / 2,
+                                                ProcessingStep = "Indexing audio transcript"
+                                            });
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            Debug.WriteLine($"[AttachmentProcessor] ERROR: Failed to invoke progress event (direct): {ex.Message}");
+                                        }
+                                    }
                                 }
                             });
 
@@ -255,7 +298,19 @@ namespace Notes
                         Debug.WriteLine("[AttachmentProcessor] WARNING: No transcription chunks generated");
                     }
 
-                    attachment.IsProcessed = true;
+                    // Use dispatcher for UI thread safety when marking as processed
+                    if (MainWindow.Instance?.DispatcherQueue != null)
+                    {
+                        MainWindow.Instance.DispatcherQueue.TryEnqueue(() =>
+                        {
+                            attachment.IsProcessed = true;
+                        });
+                    }
+                    else
+                    {
+                        attachment.IsProcessed = true;
+                    }
+                    
                     InvokeAttachmentProcessedComplete(attachment);
                     Debug.WriteLine($"[AttachmentProcessor] Audio processing completed for: {attachment.Filename}");
 
@@ -297,14 +352,63 @@ namespace Notes
         {
             Debug.WriteLine($"[AttachmentProcessor] Attachment processing completed: {attachment.Filename}");
 
-            if (AttachmentProcessed != null)
+            try
             {
-                AttachmentProcessed.Invoke(null, new AttachmentProcessedEventArgs
+                // Use MainWindow dispatcher to safely update UI from background thread
+                if (MainWindow.Instance?.DispatcherQueue != null)
                 {
-                    AttachmentId = attachment.Id,
-                    Progress = 1,
-                    ProcessingStep = "Complete"
-                });
+                    MainWindow.Instance.DispatcherQueue.TryEnqueue(() =>
+                    {
+                        try
+                        {
+                            attachment.IsProcessed = true;
+                            
+                            if (AttachmentProcessed != null)
+                            {
+                                AttachmentProcessed.Invoke(null, new AttachmentProcessedEventArgs
+                                {
+                                    AttachmentId = attachment.Id,
+                                    Progress = 1,
+                                    ProcessingStep = "Complete"
+                                });
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[AttachmentProcessor] ERROR: Failed to update UI in completion handler: {ex.Message}");
+                        }
+                    });
+                }
+                else
+                {
+                    // Fallback: direct update if no dispatcher available
+                    attachment.IsProcessed = true;
+                    
+                    if (AttachmentProcessed != null)
+                    {
+                        AttachmentProcessed.Invoke(null, new AttachmentProcessedEventArgs
+                        {
+                            AttachmentId = attachment.Id,
+                            Progress = 1,
+                            ProcessingStep = "Complete"
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AttachmentProcessor] ERROR: Exception in completion handler: {ex.Message}");
+                Debug.WriteLine($"[AttachmentProcessor] Exception details: {ex}");
+                
+                // Still try to mark as processed even if events fail
+                try
+                {
+                    attachment.IsProcessed = true;
+                }
+                catch (Exception innerEx)
+                {
+                    Debug.WriteLine($"[AttachmentProcessor] CRITICAL: Failed to mark attachment as processed: {innerEx.Message}");
+                }
             }
         }
     }
