@@ -1,4 +1,11 @@
 ﻿using System.Collections.Generic;
+using System.Threading.Tasks;
+using Windows.Graphics.Imaging;
+using Windows.Media.Ocr;
+using Windows.Globalization;
+using System;
+using System.Diagnostics;
+using System.Linq;
 
 namespace Notes.AI.TextRecognition
 {
@@ -6,6 +13,120 @@ namespace Notes.AI.TextRecognition
     {
         public List<RecognizedTextLine> Lines { get; set; } = new();
         public double ImageAngle { get; set; }
+
+        public static async Task<ImageText> GetFromRecognizedTextAsync(SoftwareBitmap softwareBitmap)
+        {
+            ImageText result = new();
+
+            if (softwareBitmap == null)
+            {
+                return result;
+            }
+
+            try
+            {
+                Debug.WriteLine("[ImageText] Starting Windows OCR text recognition...");
+                
+                // Check if OCR is available for the current language
+                var languages = OcrEngine.AvailableRecognizerLanguages;
+                if (languages.Count == 0)
+                {
+                    Debug.WriteLine("[ImageText] No OCR languages available");
+                    return result;
+                }
+
+                // Create OCR engine with the first available language (or English if available)
+                OcrEngine ocrEngine = null;
+                foreach (var language in languages)
+                {
+                    if (language.LanguageTag == "en-US" || language.LanguageTag == "en")
+                    {
+                        ocrEngine = OcrEngine.TryCreateFromLanguage(language);
+                        break;
+                    }
+                }
+
+                // If English not found, use the first available language
+                if (ocrEngine == null && languages.Count > 0)
+                {
+                    ocrEngine = OcrEngine.TryCreateFromLanguage(languages[0]);
+                }
+
+                if (ocrEngine == null)
+                {
+                    Debug.WriteLine("[ImageText] Failed to create OCR engine");
+                    return result;
+                }
+                
+                Debug.WriteLine($"[ImageText] OCR engine created for language: {ocrEngine.RecognizerLanguage.DisplayName}");
+                
+                // Ensure the bitmap is in the correct format for OCR
+                var convertedBitmap = softwareBitmap;
+                if (softwareBitmap.BitmapPixelFormat != BitmapPixelFormat.Bgra8 || 
+                    softwareBitmap.BitmapAlphaMode != BitmapAlphaMode.Premultiplied)
+                {
+                    convertedBitmap = SoftwareBitmap.Convert(softwareBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+                }
+                
+                Debug.WriteLine("[ImageText] Performing OCR text recognition...");
+                
+                // Perform OCR
+                var ocrResult = await ocrEngine.RecognizeAsync(convertedBitmap);
+                
+                Debug.WriteLine($"[ImageText] OCR completed. Found {ocrResult.Lines.Count} text lines");
+                
+                // Convert to our format
+                foreach (var line in ocrResult.Lines)
+                {
+                    // Calculate line bounding box from word bounding boxes
+                    if (line.Words.Count > 0)
+                    {
+                        var minX = line.Words.Min(w => w.BoundingRect.X);
+                        var minY = line.Words.Min(w => w.BoundingRect.Y);
+                        var maxX = line.Words.Max(w => w.BoundingRect.X + w.BoundingRect.Width);
+                        var maxY = line.Words.Max(w => w.BoundingRect.Y + w.BoundingRect.Height);
+
+                        var recognizedLine = new RecognizedTextLine
+                        {
+                            Text = line.Text,
+                            X = minX,
+                            Y = minY,
+                            Width = maxX - minX,
+                            Height = maxY - minY
+                        };
+                        result.Lines.Add(recognizedLine);
+                        Debug.WriteLine($"[ImageText] Recognized text: '{line.Text}' at ({minX}, {minY}) size ({maxX - minX}x{maxY - minY})");
+                    }
+                    else
+                    {
+                        // Fallback if no words are found but line has text
+                        var recognizedLine = new RecognizedTextLine
+                        {
+                            Text = line.Text,
+                            X = 0,
+                            Y = 0,
+                            Width = 0,
+                            Height = 0
+                        };
+                        result.Lines.Add(recognizedLine);
+                        Debug.WriteLine($"[ImageText] Recognized text (no position): '{line.Text}'");
+                    }
+                }
+                
+                // OCR doesn't provide image angle, so we'll keep it as 0
+                result.ImageAngle = ocrResult.TextAngle ?? 0.0;
+                
+                Debug.WriteLine($"[ImageText] OCR recognition successful. Total lines: {result.Lines.Count}, Angle: {result.ImageAngle}");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ImageText] Error during OCR recognition: {ex.Message}");
+                Debug.WriteLine($"[ImageText] Exception details: {ex}");
+                // Return empty result instead of throwing
+            }
+
+            return result;
+        }
 
         public static ImageText GetFromRecognizedText(object? recognizedText)
         {
@@ -16,7 +137,53 @@ namespace Notes.AI.TextRecognition
                 return attachmentRecognizedText;
             }
 
-            // Stub implementation - Microsoft.Windows.Vision is not available
+            // Legacy support - if someone passes a recognized text object
+            try
+            {
+                if (recognizedText is OcrResult ocrResult)
+                {
+                    foreach (var line in ocrResult.Lines)
+                    {
+                        // Calculate line bounding box from word bounding boxes
+                        if (line.Words.Count > 0)
+                        {
+                            var minX = line.Words.Min(w => w.BoundingRect.X);
+                            var minY = line.Words.Min(w => w.BoundingRect.Y);
+                            var maxX = line.Words.Max(w => w.BoundingRect.X + w.BoundingRect.Width);
+                            var maxY = line.Words.Max(w => w.BoundingRect.Y + w.BoundingRect.Height);
+
+                            var recognizedLine = new RecognizedTextLine
+                            {
+                                Text = line.Text,
+                                X = minX,
+                                Y = minY,
+                                Width = maxX - minX,
+                                Height = maxY - minY
+                            };
+                            attachmentRecognizedText.Lines.Add(recognizedLine);
+                        }
+                        else
+                        {
+                            // Fallback if no words are found but line has text
+                            var recognizedLine = new RecognizedTextLine
+                            {
+                                Text = line.Text,
+                                X = 0,
+                                Y = 0,
+                                Width = 0,
+                                Height = 0
+                            };
+                            attachmentRecognizedText.Lines.Add(recognizedLine);
+                        }
+                    }
+                    attachmentRecognizedText.ImageAngle = ocrResult.TextAngle ?? 0.0;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[ImageText] Error converting recognized text: {ex.Message}");
+            }
+
             return attachmentRecognizedText;
         }
     }
