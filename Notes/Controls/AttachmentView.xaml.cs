@@ -9,10 +9,12 @@ using Notes.AI.VoiceRecognition;
 using Notes.Models;
 using Notes.ViewModels;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Media.Core;
@@ -34,6 +36,9 @@ namespace Notes.Controls
         public AttachmentViewModel AttachmentVM { get; set; }
         public bool AutoScrollEnabled { get; set; } = true;
 
+        private double _currentZoomLevel = 1.0;
+        private PdfPageData _currentPdfData;
+
         public AttachmentView()
         {
             this.InitializeComponent();
@@ -50,11 +55,16 @@ namespace Notes.Controls
         {
             TranscriptionBlocks.Clear();
             transcriptLoadingProgressRing.IsActive = false;
+            if (pdfLoadingProgressRing != null)
+                pdfLoadingProgressRing.IsActive = false;
             AttachmentImage.Source = null;
             WaveformImage.Source = null;
+            if (pdfPagesContainer != null)
+                pdfPagesContainer.Children.Clear();
+            _currentPdfData = null;
             this.Visibility = Visibility.Collapsed;
 
-            if (AttachmentVM.Attachment.Type == NoteAttachmentType.Video || AttachmentVM.Attachment.Type == NoteAttachmentType.Audio)
+            if (AttachmentVM?.Attachment?.Type == NoteAttachmentType.Video || AttachmentVM?.Attachment?.Type == NoteAttachmentType.Audio)
             {
                 ResetMediaPlayer();
             }
@@ -83,6 +93,7 @@ namespace Notes.Controls
                 case NoteAttachmentType.Audio:
                     ImageGrid.Visibility = Visibility.Collapsed;
                     MediaGrid.Visibility = Visibility.Visible;
+                    if (PdfGrid != null) PdfGrid.Visibility = Visibility.Collapsed;
                     RunWaitForTranscriptionTask(attachmentText);
                     WaveformImage.Source = await WaveformRenderer.GetWaveformImage(attachmentFile);
                     SetMediaPlayerSource(attachmentFile);
@@ -90,21 +101,701 @@ namespace Notes.Controls
                 case NoteAttachmentType.Image:
                     ImageGrid.Visibility = Visibility.Visible;
                     MediaGrid.Visibility = Visibility.Collapsed;
+                    if (PdfGrid != null) PdfGrid.Visibility = Visibility.Collapsed;
                     AttachmentImage.Source = new BitmapImage(new Uri(attachmentFile.Path));
-                    LoadImageText(attachment.Attachment.Filename);
+                    await LoadImageText(attachment.Attachment.Filename);
                     break;
                 case NoteAttachmentType.Video:
                     ImageGrid.Visibility = Visibility.Collapsed;
                     MediaGrid.Visibility = Visibility.Visible;
+                    if (PdfGrid != null) PdfGrid.Visibility = Visibility.Collapsed;
                     RunWaitForTranscriptionTask(attachmentText);
                     SetMediaPlayerSource(attachmentFile);
                     break;
+                case NoteAttachmentType.PDF:
+                    ImageGrid.Visibility = Visibility.Collapsed;
+                    MediaGrid.Visibility = Visibility.Collapsed;
+                    if (PdfGrid != null) PdfGrid.Visibility = Visibility.Visible;
+                    await LoadPdfText(attachment.Attachment.Filename, attachmentText);
+                    break;
+            }
+        }
+
+        private async Task LoadPdfText(string fileName, string? searchText = null)
+        {
+            Debug.WriteLine($"[AttachmentView] Loading PDF content for: {fileName}");
+            Debug.WriteLine($"[AttachmentView] Attachment IsProcessed: {AttachmentVM.Attachment.IsProcessed}");
+            Debug.WriteLine($"[AttachmentView] FilenameForText: {AttachmentVM.Attachment.FilenameForText}");
+            
+            try
+            {
+                if (pdfLoadingProgressRing != null)
+                    pdfLoadingProgressRing.IsActive = true;
+
+                // Try to load the PDF immediately for viewing, regardless of processing status
+                var attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
+                var pdfFile = await attachmentsFolder.GetFileAsync(AttachmentVM.Attachment.Filename);
+                Debug.WriteLine($"[AttachmentView] PDF file found: {pdfFile.Path}");
+                
+                // First, try to extract and display the PDF content immediately
+                try
+                {
+                    Debug.WriteLine("[AttachmentView] Attempting immediate PDF display...");
+                    _currentPdfData = await PdfProcessor.ExtractPageDataFromPdfAsync(pdfFile);
+                    
+                    if (_currentPdfData != null && _currentPdfData.Pages.Any())
+                    {
+                        Debug.WriteLine($"[AttachmentView] Successfully extracted {_currentPdfData.Pages.Count} pages");
+                        DisplayPdfPages(_currentPdfData);
+                        UpdatePdfInfo(_currentPdfData);
+                        
+                        if (pdfLoadingProgressRing != null)
+                            pdfLoadingProgressRing.IsActive = false;
+                        
+                        Debug.WriteLine("[AttachmentView] PDF displayed successfully");
+                        
+                        // If the attachment isn't processed yet, trigger processing in the background
+                        if (!AttachmentVM.Attachment.IsProcessed)
+                        {
+                            Debug.WriteLine("[AttachmentView] PDF not yet processed, triggering background processing...");
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await AttachmentProcessor.AddAttachment(AttachmentVM.Attachment);
+                                }
+                                catch (Exception processingEx)
+                                {
+                                    Debug.WriteLine($"[AttachmentView] Background processing failed: {processingEx.Message}");
+                                }
+                            });
+                        }
+                        
+                        return; // Success! No need to wait for processing
+                    }
+                    else
+                    {
+                        Debug.WriteLine("[AttachmentView] No pages extracted from PDF");
+                    }
+                }
+                catch (Exception immediateEx)
+                {
+                    Debug.WriteLine($"[AttachmentView] Immediate PDF display failed: {immediateEx.Message}");
+                    Debug.WriteLine($"[AttachmentView] Exception details: {immediateEx}");
+                    // Fall through to the processing wait logic
+                }
+
+                // If immediate display failed, wait for processing if needed
+                if (!AttachmentVM.Attachment.IsProcessed)
+                {
+                    Debug.WriteLine("[AttachmentView] PDF not yet processed, waiting...");
+                    await WaitForPdfProcessing();
+                }
+
+                if (string.IsNullOrEmpty(AttachmentVM.Attachment.FilenameForText))
+                {
+                    Debug.WriteLine("[AttachmentView] No text file available for PDF");
+                    if (pdfLoadingProgressRing != null)
+                        pdfLoadingProgressRing.IsActive = false;
+                    ShowPdfError("PDF processing failed - no text extracted. This PDF may be password protected, corrupted, or image-based.");
+                    return;
+                }
+
+                // Load the processed text
+                try
+                {
+                    Debug.WriteLine($"[AttachmentView] Loading processed text from: {AttachmentVM.Attachment.FilenameForText}");
+                    var transcriptsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
+                    var textFile = await transcriptsFolder.GetFileAsync(AttachmentVM.Attachment.FilenameForText);
+                    string pdfText = await FileIO.ReadTextAsync(textFile);
+                    
+                    Debug.WriteLine($"[AttachmentView] Processed text loaded: {pdfText.Length} characters");
+                    Debug.WriteLine($"[AttachmentView] First 200 chars: {pdfText.Substring(0, Math.Min(200, pdfText.Length))}");
+                    
+                    // Check if it's an error message
+                    if (pdfText.Contains("PDF Text Extraction Failed") || pdfText.Contains("PDF Processing Failed"))
+                    {
+                        Debug.WriteLine("[AttachmentView] Detected error content in processed text");
+                        ShowPdfError(pdfText);
+                    }
+                    else
+                    {
+                        Debug.WriteLine("[AttachmentView] Displaying processed text as simple PDF");
+                        DisplaySimplePdfText(pdfText);
+                        if (pdfTitleBlock != null)
+                            pdfTitleBlock.Text = AttachmentVM.Attachment.Filename;
+                    }
+                }
+                catch (Exception textEx)
+                {
+                    Debug.WriteLine($"[AttachmentView] Failed to load processed text: {textEx.Message}");
+                    ShowPdfError($"Failed to load PDF text: {textEx.Message}");
+                }
+
+                // If we have search text, try to scroll to it
+                if (!string.IsNullOrEmpty(searchText))
+                {
+                    Debug.WriteLine($"[AttachmentView] Searching for text in PDF: {searchText}");
+                    // TODO: Implement search highlighting
+                }
+
+                if (pdfLoadingProgressRing != null)
+                    pdfLoadingProgressRing.IsActive = false;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AttachmentView] ERROR: Failed to load PDF content: {ex.Message}");
+                Debug.WriteLine($"[AttachmentView] Exception details: {ex}");
+                if (pdfLoadingProgressRing != null)
+                    pdfLoadingProgressRing.IsActive = false;
+                ShowPdfError($"Error loading PDF: {ex.Message}");
+            }
+        }
+
+        private void DisplayPdfPages(PdfPageData pdfData)
+        {
+            if (pdfPagesContainer == null) return;
+
+            pdfPagesContainer.Children.Clear();
+
+            foreach (var page in pdfData.Pages)
+            {
+                var pageContainer = CreatePdfPageElement(page);
+                pdfPagesContainer.Children.Add(pageContainer);
+            }
+        }
+
+        private Border CreatePdfPageElement(PdfPageInfo pageInfo)
+        {
+            // Create a paper-like container for each page
+            var pageContainer = new Border
+            {
+                Background = new SolidColorBrush(Microsoft.UI.Colors.White),
+                BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.LightGray),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                MinWidth = 600,
+                MaxWidth = 800,
+                Margin = new Thickness(0, 0, 0, 20),
+                // Add shadow effect
+                Shadow = new Microsoft.UI.Xaml.Media.ThemeShadow(),
+                Translation = new System.Numerics.Vector3(0, 0, 8)
+            };
+
+            var pageContent = new StackPanel
+            {
+                Padding = new Thickness(40, 50, 40, 50)
+            };
+
+            // Page number header
+            var pageHeader = new TextBlock
+            {
+                Text = $"Page {pageInfo.PageNumber}",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 20)
+            };
+            pageContent.Children.Add(pageHeader);
+
+            // Use structured content if available, otherwise fall back to formatted text
+            if (pageInfo.StructuredContent != null && pageInfo.StructuredContent.Any())
+            {
+                CreateStructuredContent(pageContent, pageInfo.StructuredContent);
+            }
+            else
+            {
+                // Fallback to enhanced formatted text display
+                CreateFormattedTextContent(pageContent, pageInfo.FormattedText ?? pageInfo.Text);
+            }
+
+            pageContainer.Child = pageContent;
+            return pageContainer;
+        }
+
+        private void CreateStructuredContent(StackPanel container, List<PdfTextElement> elements)
+        {
+            foreach (var element in elements)
+            {
+                var textBlock = new TextBlock
+                {
+                    Text = element.Text,
+                    TextWrapping = TextWrapping.Wrap,
+                    IsTextSelectionEnabled = true,
+                    Foreground = new SolidColorBrush(Microsoft.UI.Colors.Black),
+                    SelectionHighlightColor = new SolidColorBrush(Microsoft.UI.Colors.CornflowerBlue),
+                    Margin = GetMarginForElement(element)
+                };
+
+                // Apply styling based on content type
+                ApplyContentTypeFormatting(textBlock, element);
+
+                container.Children.Add(textBlock);
+            }
+        }
+
+        private Thickness GetMarginForElement(PdfTextElement element)
+        {
+            var leftMargin = element.IsIndented ? 20.0 : 0.0;
+            var verticalMargin = element.ElementType switch
+            {
+                PdfContentType.Header => new Thickness(leftMargin, 15, 0, 10),
+                PdfContentType.ListItem => new Thickness(leftMargin + 10, 5, 0, 5),
+                PdfContentType.Table => new Thickness(leftMargin, 8, 0, 8),
+                _ => new Thickness(leftMargin, 3, 0, 3)
+            };
+
+            return verticalMargin;
+        }
+
+        private void ApplyContentTypeFormatting(TextBlock textBlock, PdfTextElement element)
+        {
+            switch (element.ElementType)
+            {
+                case PdfContentType.Header:
+                    textBlock.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                    textBlock.FontSize = 16;
+                    if (element.IsCentered)
+                    {
+                        textBlock.HorizontalAlignment = HorizontalAlignment.Center;
+                    }
+                    break;
+
+                case PdfContentType.ListItem:
+                    textBlock.FontSize = 14;
+                    // Create a more structured list appearance
+                    if (element.Text.StartsWith("•") || element.Text.StartsWith("-") || element.Text.StartsWith("*"))
+                    {
+                        // Already has bullet, just style it
+                        textBlock.Margin = new Thickness(20, 3, 0, 3);
+                    }
+                    else if (System.Text.RegularExpressions.Regex.IsMatch(element.Text, @"^\d+\.\s"))
+                    {
+                        // Numbered list
+                        textBlock.Margin = new Thickness(20, 3, 0, 3);
+                    }
+                    break;
+
+                case PdfContentType.Table:
+                    textBlock.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
+                    textBlock.FontSize = 13;
+                    // Format table content with proper spacing
+                    FormatTableContent(textBlock, element.Text);
+                    break;
+
+                default:
+                    textBlock.FontSize = 14;
+                    textBlock.LineHeight = 20;
+                    break;
+            }
+        }
+
+        private void FormatTableContent(TextBlock textBlock, string text)
+        {
+            // Convert tabs to proper spacing for table-like appearance
+            var formattedText = text.Replace("\t", "    ");
+            textBlock.Text = formattedText;
+            
+            // Add subtle background for table rows
+            var parentContainer = textBlock.Parent as StackPanel;
+            if (parentContainer != null)
+            {
+                var border = new Border
+                {
+                    Background = new SolidColorBrush(Windows.UI.Color.FromArgb(10, 0, 0, 0)),
+                    Padding = new Thickness(8, 4, 8, 4),
+                    CornerRadius = new CornerRadius(2),
+                    Child = textBlock
+                };
+                
+                // We'll need to replace the textblock with the border
+                // This is a simplified approach - in practice you'd want to structure this differently
+            }
+        }
+
+        private void CreateFormattedTextContent(StackPanel container, string formattedText)
+        {
+            if (string.IsNullOrWhiteSpace(formattedText)) return;
+
+            var lines = formattedText.Split('\n');
+            var paragraphs = new List<List<string>>();
+            var currentParagraph = new List<string>();
+            
+            // Group lines into paragraphs
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    if (currentParagraph.Any())
+                    {
+                        paragraphs.Add(new List<string>(currentParagraph));
+                        currentParagraph.Clear();
+                    }
+                }
+                else
+                {
+                    currentParagraph.Add(line);
+                }
+            }
+            
+            // Add remaining paragraph
+            if (currentParagraph.Any())
+            {
+                paragraphs.Add(currentParagraph);
+            }
+            
+            // Render paragraphs
+            foreach (var paragraph in paragraphs)
+            {
+                if (paragraph.Count == 1)
+                {
+                    // Single line - could be header or special content
+                    CreateSingleLineElement(container, paragraph[0]);
+                }
+                else
+                {
+                    // Multi-line paragraph
+                    CreateParagraphElement(container, paragraph);
+                }
+                
+                // Add spacing between paragraphs
+                container.Children.Add(new Border { Height = 8 });
+            }
+        }
+
+        private void CreateSingleLineElement(StackPanel container, string line)
+        {
+            var textBlock = new TextBlock
+            {
+                Text = line.Replace("\t", "    "),
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                FontSize = 14,
+                TextWrapping = TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Black),
+                SelectionHighlightColor = new SolidColorBrush(Microsoft.UI.Colors.CornflowerBlue)
+            };
+
+            ApplyAdvancedFormatting(textBlock, line);
+            container.Children.Add(textBlock);
+        }
+
+        private void CreateParagraphElement(StackPanel container, List<string> lines)
+        {
+            // Combine lines into a single paragraph, handling indentation
+            var paragraphText = new StringBuilder();
+            var isFirstLine = true;
+            
+            foreach (var line in lines)
+            {
+                if (!isFirstLine)
+                {
+                    paragraphText.Append(" ");
+                }
+                
+                // Preserve important spacing but join logical lines
+                var trimmedLine = line.Trim();
+                if (!string.IsNullOrEmpty(trimmedLine))
+                {
+                    paragraphText.Append(trimmedLine);
+                }
+                isFirstLine = false;
+            }
+
+            var textBlock = new TextBlock
+            {
+                Text = paragraphText.ToString(),
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                FontSize = 14,
+                LineHeight = 22,
+                TextWrapping = TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Black),
+                SelectionHighlightColor = new SolidColorBrush(Microsoft.UI.Colors.CornflowerBlue),
+                Margin = new Thickness(0, 0, 0, 5)
+            };
+
+            // Check if paragraph should be indented
+            var firstLine = lines.FirstOrDefault() ?? "";
+            if (firstLine.StartsWith("    ") || firstLine.StartsWith("\t"))
+            {
+                textBlock.Margin = new Thickness(20, 0, 0, 5);
+            }
+
+            container.Children.Add(textBlock);
+        }
+
+        private void ApplyAdvancedFormatting(TextBlock textBlock, string line)
+        {
+            var trimmed = line.Trim();
+            var original = line;
+
+            // Detect different content types with more sophisticated rules
+            
+            // Headers - Various patterns
+            if (IsHeaderLine(trimmed))
+            {
+                textBlock.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                textBlock.FontSize = 16;
+                textBlock.Margin = new Thickness(0, 15, 0, 8);
+                
+                // Center headers that appear to be titles
+                if (trimmed.Length < 50 && !trimmed.Contains(":") && 
+                    (trimmed.All(c => char.IsUpper(c) || char.IsWhiteSpace(c) || char.IsPunctuation(c))))
+                {
+                    textBlock.HorizontalAlignment = HorizontalAlignment.Center;
+                    textBlock.FontSize = 18;
+                    textBlock.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
+                }
+            }
+            // List items
+            else if (IsListItem(trimmed))
+            {
+                textBlock.Margin = new Thickness(20, 3, 0, 3);
+                
+                // Style different list types
+                if (trimmed.StartsWith("•"))
+                {
+                    textBlock.Text = "? " + trimmed.Substring(1).Trim();
+                }
+            }
+            // Table/structured data
+            else if (IsStructuredData(original))
+            {
+                textBlock.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
+                textBlock.FontSize = 12;
+                textBlock.Text = original.Replace("\t", "    ");
+                
+                // Add background for table-like content
+                var border = new Border
+                {
+                    Background = new SolidColorBrush(Windows.UI.Color.FromArgb(15, 100, 100, 100)),
+                    Padding = new Thickness(8, 4, 8, 4),
+                    CornerRadius = new CornerRadius(3),
+                    Margin = new Thickness(0, 2, 0, 2)
+                };
+                
+                // This would need to be handled differently in the container structure
+                textBlock.Margin = new Thickness(8, 4, 8, 4);
+            }
+            // Contact info or addresses
+            else if (IsContactInfo(trimmed))
+            {
+                textBlock.FontSize = 13;
+                textBlock.Foreground = new SolidColorBrush(Microsoft.UI.Colors.DarkSlateGray);
+            }
+            // Indented content
+            else if (original.StartsWith("    ") || original.StartsWith("\t"))
+            {
+                textBlock.Margin = new Thickness(30, 2, 0, 2);
+                textBlock.FontSize = 13;
+                textBlock.Text = original.Replace("\t", "    ");
+            }
+            // Normal content with better spacing
+            else
+            {
+                textBlock.Margin = new Thickness(0, 3, 0, 3);
+                textBlock.LineHeight = 20;
+            }
+        }
+
+        private bool IsHeaderLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return false;
+            
+            return line.Length < 80 && (
+                line.EndsWith(":") ||
+                line.All(c => char.IsUpper(c) || char.IsWhiteSpace(c) || char.IsPunctuation(c)) ||
+                System.Text.RegularExpressions.Regex.IsMatch(line, @"^[A-Z][A-Za-z\s]{5,40}$") ||
+                line.Contains("CONFIRMATION") || line.Contains("HOTEL") || line.Contains("SUMMIT")
+            );
+        }
+
+        private bool IsListItem(string line)
+        {
+            return line.StartsWith("•") || line.StartsWith("-") || line.StartsWith("*") ||
+                   line.StartsWith("?") || line.StartsWith("?") ||
+                   System.Text.RegularExpressions.Regex.IsMatch(line, @"^\d+\.\s") ||
+                   System.Text.RegularExpressions.Regex.IsMatch(line, @"^[a-zA-Z]\.\s") ||
+                   System.Text.RegularExpressions.Regex.IsMatch(line, @"^[ivx]+\.\s", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        }
+
+        private bool IsStructuredData(string line)
+        {
+            return line.Contains("\t") && line.Count(c => c == '\t') >= 2;
+        }
+
+        private bool IsContactInfo(string line)
+        {
+            return System.Text.RegularExpressions.Regex.IsMatch(line, @"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b") || // Phone
+                   System.Text.RegularExpressions.Regex.IsMatch(line, @"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b") || // Email
+                   System.Text.RegularExpressions.Regex.IsMatch(line, @"\b\d+\s+[A-Za-z\s]+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase); // Address
+        }
+        
+        private void UpdatePdfInfo(PdfPageData pdfData)
+        {
+            if (pdfTitleBlock != null)
+                pdfTitleBlock.Text = pdfData.FileName;
+            
+            if (pdfPageInfoBlock != null)
+                pdfPageInfoBlock.Text = $"{pdfData.TotalPages} pages";
+        }
+
+        private void ShowPdfError(string message)
+        {
+            if (pdfPagesContainer == null) return;
+
+            pdfPagesContainer.Children.Clear();
+
+            var errorContainer = new Border
+            {
+                Background = new SolidColorBrush(Microsoft.UI.Colors.White),
+                BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.IndianRed),
+                BorderThickness = new Thickness(2),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(30),
+                Margin = new Thickness(20),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                MaxWidth = 600
+            };
+
+            var contentStack = new StackPanel
+            {
+                Spacing = 15
+            };
+
+            // Error icon and title
+            var headerStack = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 10,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+
+            var errorIcon = new FontIcon
+            {
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe Fluent Icons"),
+                Glyph = "\uE7BA", // Error icon
+                FontSize = 24,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed)
+            };
+
+            var titleText = new TextBlock
+            {
+                Text = "PDF Processing Issue",
+                FontSize = 18,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed)
+            };
+
+            headerStack.Children.Add(errorIcon);
+            headerStack.Children.Add(titleText);
+
+            // Error message
+            var errorText = new TextBlock
+            {
+                Text = message,
+                FontSize = 14,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.DarkSlateGray),
+                TextWrapping = TextWrapping.Wrap,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                IsTextSelectionEnabled = true
+            };
+
+            // Helpful suggestions
+            var suggestionText = new TextBlock
+            {
+                Text = "?? Suggestions:\n• Try opening the PDF in a dedicated PDF reader\n• Check if the PDF requires a password\n• Verify the file isn't corrupted\n• For scanned documents, OCR processing may be needed",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 10, 0, 0),
+                IsTextSelectionEnabled = true
+            };
+
+            contentStack.Children.Add(headerStack);
+            contentStack.Children.Add(errorText);
+            contentStack.Children.Add(suggestionText);
+
+            errorContainer.Child = contentStack;
+            pdfPagesContainer.Children.Add(errorContainer);
+        }
+
+        private void PdfZoomIn_Click(object sender, RoutedEventArgs e)
+        {
+            if (pdfScrollViewer != null && _currentZoomLevel < 3.0)
+            {
+                _currentZoomLevel = Math.Min(3.0, _currentZoomLevel * 1.25);
+                pdfScrollViewer.ZoomToFactor((float)_currentZoomLevel);
+                UpdateZoomDisplay();
+            }
+        }
+
+        private void PdfZoomOut_Click(object sender, RoutedEventArgs e)
+        {
+            if (pdfScrollViewer != null && _currentZoomLevel > 0.5)
+            {
+                _currentZoomLevel = Math.Max(0.5, _currentZoomLevel / 1.25);
+                pdfScrollViewer.ZoomToFactor((float)_currentZoomLevel);
+                UpdateZoomDisplay();
+            }
+        }
+
+        private void PdfScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+        {
+            if (pdfScrollViewer != null)
+            {
+                _currentZoomLevel = pdfScrollViewer.ZoomFactor;
+                UpdateZoomDisplay();
+            }
+        }
+
+        private void UpdateZoomDisplay()
+        {
+            if (pdfZoomLevel != null)
+            {
+                pdfZoomLevel.Text = $"{(_currentZoomLevel * 100):F0}%";
+            }
+        }
+
+        private async Task WaitForPdfProcessing()
+        {
+            Debug.WriteLine("[AttachmentView] Waiting for PDF processing to complete...");
+            
+            if (!AttachmentVM.Attachment.IsProcessed && !AttachmentVM.IsProcessing)
+            {
+                Debug.WriteLine("[AttachmentView] PDF not processed and not processing - triggering processing");
+                AttachmentProcessor.AddAttachment(AttachmentVM.Attachment);
+            }
+
+            // Wait for processing to complete with timeout
+            int maxWaitTime = 300; // 300 * 500ms = 2.5 minutes timeout
+            int waitCounter = 0;
+
+            while ((AttachmentVM.IsProcessing || !AttachmentVM.Attachment.IsProcessed) && waitCounter < maxWaitTime)
+            {
+                Debug.WriteLine($"[AttachmentView] Waiting for PDF processing... IsProcessing: {AttachmentVM.IsProcessing}, IsProcessed: {AttachmentVM.Attachment.IsProcessed} ({waitCounter}/{maxWaitTime})");
+                await Task.Delay(500);
+                waitCounter++;
+            }
+
+            if (waitCounter >= maxWaitTime)
+            {
+                Debug.WriteLine("[AttachmentView] ERROR: PDF processing timed out after 2.5 minutes");
+            }
+            else
+            {
+                Debug.WriteLine("[AttachmentView] PDF processing completed successfully");
             }
         }
 
         private async Task LoadImageText(string fileName)
         {
             var text = await TextRecognition.GetSavedText(fileName.Split('.')[0] + ".txt");
+            if (text == null)
+                return;
+                
             foreach (var line in text.Lines)
             {
                 var height = line.Height;
@@ -388,6 +1079,43 @@ namespace Notes.Controls
             {
                 Debug.WriteLine($"[AttachmentView] ERROR: Failed to seek to timestamp: {ex.Message}");
                 Debug.WriteLine($"[AttachmentView] Exception details: {ex}");
+            }
+        }
+
+        private void DisplaySimplePdfText(string pdfText)
+        {
+            if (pdfPagesContainer == null) return;
+
+            pdfPagesContainer.Children.Clear();
+
+            // Split by page markers and create page-like displays
+            var pages = pdfText.Split(new string[] { "=== Page " }, StringSplitOptions.RemoveEmptyEntries);
+            
+            for (int i = 0; i < pages.Length; i++)
+            {
+                var pageText = pages[i];
+                var pageNumber = i + 1;
+
+                // Clean up the page text
+                if (pageText.StartsWith(pageNumber.ToString()))
+                {
+                    var lines = pageText.Split('\n');
+                    if (lines.Length > 1)
+                    {
+                        pageText = string.Join("\n", lines.Skip(1)).Trim();
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(pageText)) continue;
+
+                var pageInfo = new PdfPageInfo
+                {
+                    PageNumber = pageNumber,
+                    FormattedText = pageText.Trim()
+                };
+
+                var pageElement = CreatePdfPageElement(pageInfo);
+                pdfPagesContainer.Children.Add(pageElement);
             }
         }
     }

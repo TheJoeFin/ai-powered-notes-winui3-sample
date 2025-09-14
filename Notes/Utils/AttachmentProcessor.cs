@@ -108,6 +108,11 @@ namespace Notes
                         Debug.WriteLine($"[AttachmentProcessor] CALLING ProcessAudio for: {attachment.Filename}");
                         await ProcessAudio(attachment);
                     }
+                    else if (attachment.Type == NoteAttachmentType.PDF)
+                    {
+                        Debug.WriteLine($"[AttachmentProcessor] CALLING ProcessPdf for: {attachment.Filename}");
+                        await ProcessPdf(attachment);
+                    }
                     else
                     {
                         Debug.WriteLine($"[AttachmentProcessor] Unknown attachment type: {attachment.Type} for file: {attachment.Filename}");
@@ -327,6 +332,125 @@ namespace Notes
                     throw;
                 }
             });
+        }
+
+        private static async Task ProcessPdf(Attachment attachment)
+        {
+            Debug.WriteLine($"[AttachmentProcessor] Starting PDF processing for: {attachment.Filename}");
+
+            try
+            {
+                var attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
+                var file = await attachmentsFolder.GetFileAsync(attachment.Filename);
+                Debug.WriteLine($"[AttachmentProcessor] PDF file loaded: {file.Path}");
+
+                // Extract text from PDF
+                var extractedText = await PdfProcessor.ExtractTextFromPdfAsync(file);
+                
+                // Always save the result, even if it's an error message
+                // This allows the user to see what went wrong
+                Debug.WriteLine($"[AttachmentProcessor] Text extraction completed for: {attachment.Filename}");
+                Debug.WriteLine($"[AttachmentProcessor] Extracted text length: {extractedText.Length} characters");
+
+                // Save extracted text to file
+                var filename = await SaveTextToFileAsync(extractedText, file.DisplayName + ".txt");
+                attachment.FilenameForText = filename;
+                Debug.WriteLine($"[AttachmentProcessor] Text saved to: {filename}");
+
+                // Only add to semantic index if we got meaningful content
+                // (not just error messages)
+                if (!string.IsNullOrWhiteSpace(extractedText) && 
+                    !extractedText.Contains("PDF Text Extraction Failed") &&
+                    extractedText.Length > 100)
+                {
+                    try
+                    {
+                        await SemanticIndex.Instance.AddOrReplaceContent(extractedText, attachment.Id, "attachment", (o, p) =>
+                        {
+                            Debug.WriteLine($"[AttachmentProcessor] PDF indexing progress: {p * 100:F1}%");
+                            if (AttachmentProcessed != null)
+                            {
+                                if (MainWindow.Instance?.DispatcherQueue != null)
+                                {
+                                    MainWindow.Instance.DispatcherQueue.TryEnqueue(() =>
+                                    {
+                                        try
+                                        {
+                                            AttachmentProcessed.Invoke(null, new AttachmentProcessedEventArgs
+                                            {
+                                                AttachmentId = attachment.Id,
+                                                Progress = 0.5f + p / 2,
+                                                ProcessingStep = "Indexing PDF content"
+                                            });
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            Debug.WriteLine($"[AttachmentProcessor] ERROR: Failed to invoke progress event: {ex.Message}");
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                        Debug.WriteLine("[AttachmentProcessor] PDF semantic indexing completed");
+                    }
+                    catch (Exception indexEx)
+                    {
+                        Debug.WriteLine($"[AttachmentProcessor] WARNING: PDF semantic indexing failed: {indexEx.Message}");
+                        // Continue processing even if indexing fails
+                    }
+                }
+                else
+                {
+                    Debug.WriteLine("[AttachmentProcessor] Skipping semantic indexing due to insufficient or error content");
+                }
+
+                // Use dispatcher for UI thread safety
+                if (MainWindow.Instance?.DispatcherQueue != null)
+                {
+                    MainWindow.Instance.DispatcherQueue.TryEnqueue(() =>
+                    {
+                        attachment.IsProcessed = true;
+                    });
+                }
+                else
+                {
+                    attachment.IsProcessed = true;
+                }
+                
+                InvokeAttachmentProcessedComplete(attachment);
+                Debug.WriteLine($"[AttachmentProcessor] PDF processing completed for: {attachment.Filename}");
+
+                var context = await AppDataContext.GetCurrentAsync();
+                context.Update(attachment);
+                await context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AttachmentProcessor] ERROR: PDF processing failed for {attachment.Filename}: {ex.Message}");
+                Debug.WriteLine($"[AttachmentProcessor] Exception details: {ex}");
+                
+                try
+                {
+                    // Even if processing fails, save an error message so the user knows what happened
+                    var errorText = $"PDF Processing Failed\n\nFile: {attachment.Filename}\nError: {ex.Message}\n\nThe PDF file may be:\n- Password protected\n- Corrupted\n- In an unsupported format\n- An image-based/scanned document";
+                    var filename = await SaveTextToFileAsync(errorText, attachment.Filename + ".error.txt");
+                    attachment.FilenameForText = filename;
+                    attachment.IsProcessed = true;
+                    
+                    InvokeAttachmentProcessedComplete(attachment);
+                    
+                    var context = await AppDataContext.GetCurrentAsync();
+                    context.Update(attachment);
+                    await context.SaveChangesAsync();
+                    
+                    Debug.WriteLine($"[AttachmentProcessor] Error message saved for failed PDF: {filename}");
+                }
+                catch (Exception saveEx)
+                {
+                    Debug.WriteLine($"[AttachmentProcessor] CRITICAL: Failed to save error message: {saveEx.Message}");
+                    throw; // Re-throw if we can't even save an error message
+                }
+            }
         }
 
         private async static Task<string> SaveTextToFileAsync(string text, string filename)

@@ -153,6 +153,11 @@ namespace Notes.ViewModels
                 attachment.Type = NoteAttachmentType.Video;
                 Debug.WriteLine($"[NoteViewModel] Attachment type: Video");
             }
+            else if (file.FileType == ".pdf")
+            {
+                attachment.Type = NoteAttachmentType.PDF;
+                Debug.WriteLine($"[NoteViewModel] Attachment type: PDF");
+            }
             else
             {
                 attachment.Type = NoteAttachmentType.Document;
@@ -233,7 +238,7 @@ namespace Notes.ViewModels
 
         public async Task SummarizeAudioAttachmentAsync(AttachmentViewModel attachmentViewModel)
         {
-            if (App.ChatClient == null || !attachmentViewModel.Attachment.IsProcessed || 
+            if (!attachmentViewModel.Attachment.IsProcessed || 
                 string.IsNullOrEmpty(attachmentViewModel.Attachment.FilenameForText))
             {
                 return;
@@ -250,29 +255,41 @@ namespace Notes.ViewModels
 
                 Debug.WriteLine($"[NoteViewModel] Transcript loaded, length: {transcriptText.Length} characters");
 
-                // Check if transcript is too large and needs chunking
-                const int MAX_CHUNK_SIZE = 8000; // Conservative limit for AI models
-                string summaryText = "\n\n## Summary\n";
+                string summaryText;
 
-                if (transcriptText.Length <= MAX_CHUNK_SIZE)
+                // Prioritize fast local processing, use AI only for small transcripts on supported hardware
+                if (App.ChatClient != null && transcriptText.Length <= 4000)
                 {
-                    // Process normally for small transcripts
-                    CancellationTokenSource cts = new CancellationTokenSource();
-                    await foreach (var partialResult in App.ChatClient.SummarizeAudioTranscriptAsync(transcriptText, cts.Token))
+                    Debug.WriteLine("[NoteViewModel] Using Windows AI for audio summarization (small transcript)");
+                    // Use Windows AI for small transcripts
+                    summaryText = "\n\n## Audio Summary (AI Enhanced)\n";
+                    try
                     {
-                        summaryText += partialResult;
+                        CancellationTokenSource cts = new CancellationTokenSource();
+                        await foreach (var partialResult in App.ChatClient.SummarizeAudioTranscriptAsync(transcriptText, cts.Token))
+                        {
+                            summaryText += partialResult;
+                        }
+                        summaryText += "\n";
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[NoteViewModel] AI summarization failed, falling back to local: {ex.Message}");
+                        summaryText = await IChatClientExtensions.SummarizeAudioTranscriptLocalAsync(transcriptText);
+                        summaryText += "\n";
                     }
                 }
                 else
                 {
-                    // Process in chunks for large transcripts
-                    Debug.WriteLine($"[NoteViewModel] Large transcript detected ({transcriptText.Length} chars), processing in chunks");
-                    summaryText = await ProcessLargeTranscriptSummary(transcriptText, MAX_CHUNK_SIZE);
+                    Debug.WriteLine("[NoteViewModel] Using ultra-fast local processing for audio summarization");
+                    // Use ultra-fast local processing for all other cases
+                    summaryText = await IChatClientExtensions.SummarizeAudioTranscriptLocalAsync(transcriptText);
+                    summaryText += "\n";
                 }
 
                 // Add the summary to the end of the note content
                 Content = Content + summaryText + "\n";
-                Debug.WriteLine($"[NoteViewModel] Summary added to note content");
+                Debug.WriteLine($"[NoteViewModel] Audio summary added to note content");
             }
             catch (Exception ex)
             {
@@ -281,9 +298,84 @@ namespace Notes.ViewModels
             }
         }
 
+        public async Task SummarizeImageAttachmentAsync(AttachmentViewModel attachmentViewModel)
+        {
+            if (!attachmentViewModel.Attachment.IsProcessed || 
+                string.IsNullOrEmpty(attachmentViewModel.Attachment.FilenameForText))
+            {
+                return;
+            }
+
+            try
+            {
+                Debug.WriteLine($"[NoteViewModel] Starting image summarization for: {attachmentViewModel.Attachment.Filename}");
+
+                // Use the existing TextRecognition API to load the image text
+                var imageText = await Notes.AI.TextRecognition.TextRecognition.GetSavedText(attachmentViewModel.Attachment.FilenameForText);
+                
+                if (imageText?.Lines == null || imageText.Lines.Count == 0)
+                {
+                    Debug.WriteLine("[NoteViewModel] No text content found in image");
+                    return;
+                }
+
+                // Extract plain text from the ImageText object
+                string plainText = string.Join("\n", imageText.Lines.Select(line => line.Text));
+                
+                if (string.IsNullOrWhiteSpace(plainText))
+                {
+                    Debug.WriteLine("[NoteViewModel] No meaningful text content found in image");
+                    return;
+                }
+
+                Debug.WriteLine($"[NoteViewModel] Extracted plain text, length: {plainText.Length} characters");
+
+                string summaryText;
+
+                // Prioritize fast local processing, use AI only for small text on supported hardware
+                if (App.ChatClient != null && plainText.Length <= 4000)
+                {
+                    Debug.WriteLine("[NoteViewModel] Using Windows AI for image summarization (small text)");
+                    // Use Windows AI for small text
+                    summaryText = "\n\n## Image Summary (AI Enhanced)\n";
+                    try
+                    {
+                        CancellationTokenSource cts = new CancellationTokenSource();
+                        await foreach (var partialResult in App.ChatClient.SummarizeImageTextAsync(plainText, cts.Token))
+                        {
+                            summaryText += partialResult;
+                        }
+                        summaryText += "\n";
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[NoteViewModel] AI summarization failed, falling back to local: {ex.Message}");
+                        summaryText = await IChatClientExtensions.SummarizeImageTextLocalAsync(plainText);
+                        summaryText += "\n";
+                    }
+                }
+                else
+                {
+                    Debug.WriteLine("[NoteViewModel] Using ultra-fast local processing for image summarization");
+                    // Use ultra-fast local processing for all other cases
+                    summaryText = await IChatClientExtensions.SummarizeImageTextLocalAsync(plainText);
+                    summaryText += "\n";
+                }
+
+                // Add the summary to the end of the note content
+                Content = Content + summaryText + "\n";
+                Debug.WriteLine($"[NoteViewModel] Image summary added to note content");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NoteViewModel] ERROR: Image summarization failed: {ex.Message}");
+                throw;
+            }
+        }
+
         public async Task AddTopicsAndTimestampsAsync(AttachmentViewModel attachmentViewModel)
         {
-            if (App.ChatClient == null || !attachmentViewModel.Attachment.IsProcessed || 
+            if (!attachmentViewModel.Attachment.IsProcessed || 
                 string.IsNullOrEmpty(attachmentViewModel.Attachment.FilenameForText))
             {
                 return;
@@ -300,24 +392,39 @@ namespace Notes.ViewModels
 
                 Debug.WriteLine($"[NoteViewModel] Transcript loaded, length: {transcriptText.Length} characters");
 
-                // Check if transcript is too large and needs chunking
-                const int MAX_CHUNK_SIZE = 8000; // Conservative limit for AI models
-                string topicsText = "\n\n## Topics\n";
+                string topicsText;
 
-                if (transcriptText.Length <= MAX_CHUNK_SIZE)
+                // Prioritize fast local processing, use AI only for small transcripts on supported hardware
+                if (App.ChatClient != null && transcriptText.Length <= 4000)
                 {
-                    // Process normally for small transcripts
-                    CancellationTokenSource cts = new CancellationTokenSource();
-                    await foreach (var partialResult in App.ChatClient.ExtractTopicsAndTimestampsAsync(transcriptText, cts.Token))
+                    Debug.WriteLine("[NoteViewModel] Using Windows AI for topics extraction (small transcript)");
+                    // Use Windows AI for small transcripts
+                    topicsText = "\n\n## Topics (AI Enhanced)\n";
+                    try
                     {
-                        topicsText += partialResult;
+                        CancellationTokenSource cts = new CancellationTokenSource();
+                        await foreach (var partialResult in App.ChatClient.ExtractTopicsAndTimestampsAsync(transcriptText, cts.Token))
+                        {
+                            topicsText += partialResult;
+                        }
+                        
+                        // Make timestamps clickable
+                        topicsText = MakeTimestampsClickable(topicsText, attachmentViewModel.Attachment.Id);
+                        topicsText += "\n";
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[NoteViewModel] AI topics extraction failed, falling back to local: {ex.Message}");
+                        topicsText = await IChatClientExtensions.ExtractTopicsLocalAsync(transcriptText, attachmentViewModel.Attachment.Id);
+                        topicsText += "\n";
                     }
                 }
                 else
                 {
-                    // Process in chunks for large transcripts
-                    Debug.WriteLine($"[NoteViewModel] Large transcript detected ({transcriptText.Length} chars), processing in chunks");
-                    topicsText = await ProcessLargeTranscriptTopics(transcriptText, MAX_CHUNK_SIZE, attachmentViewModel.Attachment.Id);
+                    Debug.WriteLine("[NoteViewModel] Using ultra-fast local processing for topics extraction");
+                    // Use ultra-fast local processing for all other cases
+                    topicsText = await IChatClientExtensions.ExtractTopicsLocalAsync(transcriptText, attachmentViewModel.Attachment.Id);
+                    topicsText += "\n";
                 }
 
                 // Add the topics to the end of the note content
@@ -327,6 +434,68 @@ namespace Notes.ViewModels
             catch (Exception ex)
             {
                 Debug.WriteLine($"[NoteViewModel] ERROR: Topics and timestamps extraction failed: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task SummarizePdfAttachmentAsync(AttachmentViewModel attachmentViewModel)
+        {
+            if (!attachmentViewModel.Attachment.IsProcessed || 
+                string.IsNullOrEmpty(attachmentViewModel.Attachment.FilenameForText))
+            {
+                return;
+            }
+
+            try
+            {
+                Debug.WriteLine($"[NoteViewModel] Starting PDF summarization for: {attachmentViewModel.Attachment.Filename}");
+
+                // Read the extracted text file
+                var transcriptsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
+                var textFile = await transcriptsFolder.GetFileAsync(attachmentViewModel.Attachment.FilenameForText);
+                string pdfText = await FileIO.ReadTextAsync(textFile);
+
+                Debug.WriteLine($"[NoteViewModel] PDF text loaded, length: {pdfText.Length} characters");
+
+                string summaryText;
+
+                // Prioritize fast local processing, use AI only for small PDFs on supported hardware
+                if (App.ChatClient != null && pdfText.Length <= 4000)
+                {
+                    Debug.WriteLine("[NoteViewModel] Using Windows AI for PDF summarization (small document)");
+                    // Use Windows AI for small documents
+                    summaryText = "\n\n## PDF Summary (AI Enhanced)\n";
+                    try
+                    {
+                        CancellationTokenSource cts = new CancellationTokenSource();
+                        await foreach (var partialResult in App.ChatClient.SummarizePdfTextAsync(pdfText, cts.Token))
+                        {
+                            summaryText += partialResult;
+                        }
+                        summaryText += "\n";
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[NoteViewModel] AI PDF summarization failed, falling back to local: {ex.Message}");
+                        summaryText = await IChatClientExtensions.SummarizePdfTextLocalAsync(pdfText);
+                        summaryText += "\n";
+                    }
+                }
+                else
+                {
+                    Debug.WriteLine("[NoteViewModel] Using ultra-fast local processing for PDF summarization");
+                    // Use ultra-fast local processing for all other cases
+                    summaryText = await IChatClientExtensions.SummarizePdfTextLocalAsync(pdfText);
+                    summaryText += "\n";
+                }
+
+                // Add the summary to the end of the note content
+                Content = Content + summaryText + "\n";
+                Debug.WriteLine($"[NoteViewModel] PDF summary added to note content");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NoteViewModel] ERROR: PDF summarization failed: {ex.Message}");
                 throw;
             }
         }

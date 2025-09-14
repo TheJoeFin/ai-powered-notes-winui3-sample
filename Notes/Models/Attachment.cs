@@ -39,6 +39,7 @@ namespace Notes.Models
         Image = 0,
         Audio = 1,
         Video = 2,
-        Document = 3
+        Document = 3,
+        PDF = 4
     }
 }

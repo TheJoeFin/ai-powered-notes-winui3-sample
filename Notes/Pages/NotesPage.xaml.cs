@@ -338,13 +338,28 @@ namespace Notes.Pages
                 NoteAttachmentType.Image => "🖼️",
                 NoteAttachmentType.Audio => "🎙️",
                 NoteAttachmentType.Video => "🎞️",
-                NoteAttachmentType.Document => "📄"
+                NoteAttachmentType.Document => "📄",
+                NoteAttachmentType.PDF => "📕"
             };
         }
 
         public static Visibility GetAudioMenuItemVisibility(NoteAttachmentType type, bool isProcessed)
         {
             return (type == NoteAttachmentType.Audio || type == NoteAttachmentType.Video) && isProcessed 
+                ? Visibility.Visible 
+                : Visibility.Collapsed;
+        }
+
+        public static Visibility GetImageMenuItemVisibility(NoteAttachmentType type, bool isProcessed)
+        {
+            return type == NoteAttachmentType.Image && isProcessed 
+                ? Visibility.Visible 
+                : Visibility.Collapsed;
+        }
+
+        public static Visibility GetPdfMenuItemVisibility(NoteAttachmentType type, bool isProcessed)
+        {
+            return type == NoteAttachmentType.PDF && isProcessed 
                 ? Visibility.Visible 
                 : Visibility.Collapsed;
         }
@@ -413,6 +428,126 @@ namespace Notes.Pages
                 {
                     Title = "Summarization Failed",
                     Content = $"Failed to summarize audio: {ex.Message}",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.XamlRoot
+                };
+                await errorDialog.ShowAsync();
+            }
+        }
+
+        private async void SummarizeImageMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var attachment = (sender as FrameworkElement).DataContext as AttachmentViewModel;
+            if (attachment == null) return;
+
+            Debug.WriteLine($"[NotesPage] Starting image summarization for: {attachment.Attachment.Filename}");
+
+            // Show progress ring or loading indicator
+            var progressDialog = new ContentDialog
+            {
+                Title = "Generating Image Summary",
+                Content = new StackPanel
+                {
+                    Children =
+                    {
+                        new ProgressRing { IsActive = true, HorizontalAlignment = HorizontalAlignment.Center },
+                        new TextBlock { Text = "Analyzing image text and generating summary...", Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Center }
+                    }
+                },
+                XamlRoot = this.XamlRoot
+            };
+
+            try
+            {
+                // Start the summarization task
+                var summarizationTask = ViewModel.SummarizeImageAttachmentAsync(attachment);
+                
+                // Show the progress dialog
+                var dialogTask = progressDialog.ShowAsync();
+                
+                // Wait for summarization to complete
+                await summarizationTask;
+                
+                // Close the progress dialog
+                progressDialog.Hide();
+                
+                // Update the RichEditBox content
+                ContentsRichEditBox.Document.SetText(Microsoft.UI.Text.TextSetOptions.None, ViewModel.Content);
+                
+                Debug.WriteLine($"[NotesPage] Image summarization completed and added to note");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NotesPage] ERROR: Image summarization failed: {ex.Message}");
+                
+                // Close progress dialog first
+                progressDialog.Hide();
+                
+                // Show error to user
+                var errorDialog = new ContentDialog
+                {
+                    Title = "Summarization Failed",
+                    Content = $"Failed to summarize image: {ex.Message}",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.XamlRoot
+                };
+                await errorDialog.ShowAsync();
+            }
+        }
+
+        private async void SummarizePdfMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var attachment = (sender as FrameworkElement).DataContext as AttachmentViewModel;
+            if (attachment == null) return;
+
+            Debug.WriteLine($"[NotesPage] Starting PDF summarization for: {attachment.Attachment.Filename}");
+
+            // Show progress ring or loading indicator
+            var progressDialog = new ContentDialog
+            {
+                Title = "Generating PDF Summary",
+                Content = new StackPanel
+                {
+                    Children =
+                    {
+                        new ProgressRing { IsActive = true, HorizontalAlignment = HorizontalAlignment.Center },
+                        new TextBlock { Text = "Analyzing PDF content and generating summary...", Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Center }
+                    }
+                },
+                XamlRoot = this.XamlRoot
+            };
+
+            try
+            {
+                // Start the summarization task
+                var summarizationTask = ViewModel.SummarizePdfAttachmentAsync(attachment);
+                
+                // Show the progress dialog
+                var dialogTask = progressDialog.ShowAsync();
+                
+                // Wait for summarization to complete
+                await summarizationTask;
+                
+                // Close the progress dialog
+                progressDialog.Hide();
+                
+                // Update the RichEditBox content
+                ContentsRichEditBox.Document.SetText(Microsoft.UI.Text.TextSetOptions.None, ViewModel.Content);
+                
+                Debug.WriteLine($"[NotesPage] PDF summarization completed and added to note");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NotesPage] ERROR: PDF summarization failed: {ex.Message}");
+                
+                // Close progress dialog first
+                progressDialog.Hide();
+                
+                // Show error to user
+                var errorDialog = new ContentDialog
+                {
+                    Title = "Summarization Failed",
+                    Content = $"Failed to summarize PDF: {ex.Message}",
                     CloseButtonText = "OK",
                     XamlRoot = this.XamlRoot
                 };

@@ -284,6 +284,18 @@
                                     Background="#12242424">
                                 <Grid.ContextFlyout>
                                     <MenuFlyout>
+                                        <!-- Image specific menu items -->
+                                        <MenuFlyoutItem Text="Summarize Image Text" 
+                                                        Click="SummarizeImageMenuItem_Click"
+                                                        Visibility="{x:Bind local:NotesPage.GetImageMenuItemVisibility(Attachment.Type, Attachment.IsProcessed), Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon>
+                                                <SymbolIcon Symbol="Document"/>
+                                            </MenuFlyoutItem.Icon>
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Generate a summary of the text extracted from the image and add it to the note"/>
+                                            </ToolTipService.ToolTip>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutSeparator Visibility="{x:Bind local:NotesPage.GetImageMenuItemVisibility(Attachment.Type, Attachment.IsProcessed), Mode=OneWay}"/>
                                         <!-- Audio/Video specific menu items -->
                                         <MenuFlyoutItem Text="Summarize" 
                                                         Click="SummarizeAudioMenuItem_Click"
@@ -306,6 +318,18 @@
                                             </ToolTipService.ToolTip>
                                         </MenuFlyoutItem>
                                         <MenuFlyoutSeparator Visibility="{x:Bind local:NotesPage.GetAudioMenuItemVisibility(Attachment.Type, Attachment.IsProcessed), Mode=OneWay}"/>
+                                        <!-- PDF specific menu items -->
+                                        <MenuFlyoutItem Text="Summarize PDF" 
+                                                        Click="SummarizePdfMenuItem_Click"
+                                                        Visibility="{x:Bind local:NotesPage.GetPdfMenuItemVisibility(Attachment.Type, Attachment.IsProcessed), Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon>
+                                                <SymbolIcon Symbol="Document"/>
+                                            </MenuFlyoutItem.Icon>
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Generate a summary of the PDF content and add it to the note"/>
+                                            </ToolTipService.ToolTip>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutSeparator Visibility="{x:Bind local:NotesPage.GetPdfMenuItemVisibility(Attachment.Type, Attachment.IsProcessed), Mode=OneWay}"/>
                                         <!-- Common menu items -->
                                         <MenuFlyoutItem Text="Delete" Click="ContactDeleteMenuyItem_Click">
                                             <MenuFlyoutItem.Icon>
