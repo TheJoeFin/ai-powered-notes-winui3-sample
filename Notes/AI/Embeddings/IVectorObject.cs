@@ -1,7 +1,6 @@
-﻿namespace Notes.AI.Embeddings
+﻿namespace Notes.AI.Embeddings;
+
+public interface IVectorObject
 {
-    public interface IVectorObject
-    {
-        float[] Vectors { get; }
-    }
+    float[] Vectors { get; }
 }

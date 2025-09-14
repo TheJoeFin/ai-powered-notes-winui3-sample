@@ -53,10 +53,10 @@ internal class GenAIModel : IChatClient
     public static async Task<GenAIModel?> CreateAsync(string modelDir, LlmPromptTemplate? template = null, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA2000 // Dispose objects before losing scope
-        var model = new GenAIModel(modelDir);
+        GenAIModel model = new(modelDir);
 #pragma warning restore CA2000 // Dispose objects before losing scope
 
-        var lockAcquired = false;
+        bool lockAcquired = false;
         try
         {
             // ensure we call CreateAsync one at a time to avoid fun issues
@@ -113,11 +113,11 @@ internal class GenAIModel : IChatClient
 
         string systemMsgWithoutSystemTemplate = string.Empty;
 
-        var historyList = history.ToList(); // Convert to list for indexing
+        List<ChatMessage> historyList = history.ToList(); // Convert to list for indexing
 
-        for (var i = 0; i < historyList.Count; i++)
+        for (int i = 0; i < historyList.Count; i++)
         {
-            var message = historyList[i];
+            ChatMessage message = historyList[i];
             if (message.Role == ChatRole.System)
             {
                 // ignore system prompts that aren't at the beginning
@@ -155,7 +155,7 @@ internal class GenAIModel : IChatClient
 
         if (!string.IsNullOrWhiteSpace(_template.Assistant))
         {
-            var substringIndex = _template.Assistant.IndexOf(TEMPLATE_PLACEHOLDER, StringComparison.InvariantCulture);
+            int substringIndex = _template.Assistant.IndexOf(TEMPLATE_PLACEHOLDER, StringComparison.InvariantCulture);
             prompt.Append(_template.Assistant[..substringIndex]);
         }
 
@@ -168,7 +168,7 @@ internal class GenAIModel : IChatClient
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> chatMessages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var prompt = GetPrompt(chatMessages);
+        string prompt = GetPrompt(chatMessages);
 
         if (!IsReady)
         {
@@ -177,9 +177,9 @@ internal class GenAIModel : IChatClient
 
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
 
-        using var generatorParams = new GeneratorParams(_model);
+        using GeneratorParams generatorParams = new(_model);
 
-        using var sequences = _tokenizer.Encode(prompt);
+        using Sequences sequences = _tokenizer.Encode(prompt);
 
         void TransferMetadataValue(string propertyName, object defaultValue)
         {
@@ -214,8 +214,8 @@ internal class GenAIModel : IChatClient
         generatorParams.SetSearchOption("max_length", (options?.MaxOutputTokens ?? DefaultMaxLength) + sequences[0].Length);
         generatorParams.TryGraphCaptureWithMaxBatchSize(1);
 
-        using var tokenizerStream = _tokenizer.CreateStream();
-        using var generator = new Generator(_model, generatorParams);
+        using TokenizerStream tokenizerStream = _tokenizer.CreateStream();
+        using Generator generator = new(_model, generatorParams);
         generator.AppendTokenSequences(sequences);
         StringBuilder stringBuilder = new();
         bool stopTokensAvailable = _template != null && _template.Stop != null && _template.Stop.Length > 0;
@@ -241,7 +241,7 @@ internal class GenAIModel : IChatClient
 
                 if (stopTokensAvailable)
                 {
-                    var str = stringBuilder.ToString();
+                    string str = stringBuilder.ToString();
                     if (_template!.Stop!.Any(str.Contains))
                     {
                         break;
@@ -253,7 +253,7 @@ internal class GenAIModel : IChatClient
                 break;
             }
 
-            var content = new TextContent(part);
+            TextContent content = new(part);
             yield return new ChatResponseUpdate(ChatRole.Assistant, part);
         }
     }

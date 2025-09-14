@@ -7,75 +7,63 @@ using System.Drawing.Imaging;
 using System.IO;
 using Windows.Storage;
 
-namespace Notes
+namespace Notes;
+
+public static class WaveformRenderer
 {
-    public static class WaveformRenderer
+    public enum PeakProvider
     {
-        public enum PeakProvider
+        Max,
+        RMS,
+        Sampling,
+        Average
+    }
+
+    private static Image Render(StorageFile audioFile, int height, int width, PeakProvider peakProvider)
+    {
+        WaveFormRendererSettings settings = new StandardWaveFormRendererSettings
         {
-            Max,
-            RMS,
-            Sampling,
-            Average
+            BackgroundColor = Color.Transparent,
+            SpacerPixels = 0,
+            TopHeight = height,
+            BottomHeight = height,
+            Width = width,
+            TopPeakPen = new Pen(Color.DarkGray),
+            BottomPeakPen = new Pen(Color.DarkGray)
+        };
+        AudioFileReader audioFileReader = new(audioFile.Path);
+        IPeakProvider provider = peakProvider switch
+        {
+            PeakProvider.Max => new MaxPeakProvider(),
+            PeakProvider.RMS => new RmsPeakProvider(200),
+            PeakProvider.Sampling => new SamplingPeakProvider(1600),
+            _ => new AveragePeakProvider(4),
+        };
+        WaveFormRenderer renderer = new();
+        return renderer.Render(audioFileReader, provider, settings);
+    }
+
+    public static async System.Threading.Tasks.Task<BitmapImage> GetWaveformImage(StorageFile audioFile)
+    {
+        StorageFile imageFile;
+        StorageFolder attachmentsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
+        string waveformFileName = Path.ChangeExtension(Path.GetFileName(audioFile.Path) + "-waveform", ".png");
+        try
+        {
+            imageFile = await attachmentsFolder.CreateFileAsync(waveformFileName, CreationCollisionOption.FailIfExists);
+            using Stream stream = await imageFile.OpenStreamForWriteAsync();
+            System.Drawing.Image image = Render(audioFile, 400, 800, PeakProvider.Average);
+            image.Save(stream, ImageFormat.Png);
+        }
+        catch
+        {
+            imageFile = await attachmentsFolder.GetFileAsync(waveformFileName);
         }
 
-        private static Image Render(StorageFile audioFile, int height, int width, PeakProvider peakProvider)
-        {
-            WaveFormRendererSettings settings = new StandardWaveFormRendererSettings();
-            settings.BackgroundColor = Color.Transparent;
-            settings.SpacerPixels = 0;
-            settings.TopHeight = height;
-            settings.BottomHeight = height;
-            settings.Width = width;
-            settings.TopPeakPen = new Pen(Color.DarkGray);
-            settings.BottomPeakPen = new Pen(Color.DarkGray);
-            AudioFileReader audioFileReader = new AudioFileReader(audioFile.Path);
 
-            IPeakProvider provider;
-            switch (peakProvider)
-            {
-                case PeakProvider.Max:
-                    provider = new MaxPeakProvider();
-                    break;
-                case PeakProvider.RMS:
-                    provider = new RmsPeakProvider(200);
-                    break;
-                case PeakProvider.Sampling:
-                    provider = new SamplingPeakProvider(1600);
-                    break;
-                default:
-                    provider = new AveragePeakProvider(4);
-                    break;
-            }
+        Uri uri = new(imageFile.Path);
+        BitmapImage bi = new(uri);
 
-            WaveFormRenderer renderer = new WaveFormRenderer();
-            return renderer.Render(audioFileReader, provider, settings);
-        }
-
-        public static async System.Threading.Tasks.Task<BitmapImage> GetWaveformImage(StorageFile audioFile)
-        {
-            StorageFile imageFile;
-            StorageFolder attachmentsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
-            string waveformFileName = Path.ChangeExtension(Path.GetFileName(audioFile.Path) + "-waveform", ".png");
-            try
-            {
-                imageFile = await attachmentsFolder.CreateFileAsync(waveformFileName, CreationCollisionOption.FailIfExists);
-                using (var stream = await imageFile.OpenStreamForWriteAsync())
-                {
-                    System.Drawing.Image image = Render(audioFile, 400, 800, PeakProvider.Average);
-                    image.Save(stream, ImageFormat.Png);
-                }
-            }
-            catch
-            {
-                imageFile = await attachmentsFolder.GetFileAsync(waveformFileName);
-            }
-
-
-            Uri uri = new Uri(imageFile.Path);
-            BitmapImage bi = new BitmapImage(uri);
-
-            return bi;
-        }
+        return bi;
     }
 }
