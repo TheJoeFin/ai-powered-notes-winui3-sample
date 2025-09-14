@@ -5,9 +5,13 @@ using Notes.AI;
 using Notes.AI.Embeddings;
 using Notes.Models;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -227,19 +231,298 @@ namespace Notes.ViewModels
             DispatcherQueue.TryEnqueue(() => TodosLoading = false);
         }
 
-        public async Task AddAttachmentAsync(SoftwareBitmap bitmap)
+        public async Task SummarizeAudioAttachmentAsync(AttachmentViewModel attachmentViewModel)
         {
-            // save bitmap to file
-            var attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
-            var file = await attachmentsFolder.CreateFileAsync(Guid.NewGuid().ToString() + ".png", CreationCollisionOption.GenerateUniqueName);
-            using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
+            if (App.ChatClient == null || !attachmentViewModel.Attachment.IsProcessed || 
+                string.IsNullOrEmpty(attachmentViewModel.Attachment.FilenameForText))
             {
-                var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
-                encoder.SetSoftwareBitmap(bitmap);
-                await encoder.FlushAsync();
+                return;
             }
 
-            await AddAttachmentAsync(file);
+            try
+            {
+                Debug.WriteLine($"[NoteViewModel] Starting audio summarization for: {attachmentViewModel.Attachment.Filename}");
+
+                // Read the transcript file
+                var transcriptsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
+                var transcriptFile = await transcriptsFolder.GetFileAsync(attachmentViewModel.Attachment.FilenameForText);
+                string transcriptText = await FileIO.ReadTextAsync(transcriptFile);
+
+                Debug.WriteLine($"[NoteViewModel] Transcript loaded, length: {transcriptText.Length} characters");
+
+                // Check if transcript is too large and needs chunking
+                const int MAX_CHUNK_SIZE = 8000; // Conservative limit for AI models
+                string summaryText = "\n\n## Summary\n";
+
+                if (transcriptText.Length <= MAX_CHUNK_SIZE)
+                {
+                    // Process normally for small transcripts
+                    CancellationTokenSource cts = new CancellationTokenSource();
+                    await foreach (var partialResult in App.ChatClient.SummarizeAudioTranscriptAsync(transcriptText, cts.Token))
+                    {
+                        summaryText += partialResult;
+                    }
+                }
+                else
+                {
+                    // Process in chunks for large transcripts
+                    Debug.WriteLine($"[NoteViewModel] Large transcript detected ({transcriptText.Length} chars), processing in chunks");
+                    summaryText = await ProcessLargeTranscriptSummary(transcriptText, MAX_CHUNK_SIZE);
+                }
+
+                // Add the summary to the end of the note content
+                Content = Content + summaryText + "\n";
+                Debug.WriteLine($"[NoteViewModel] Summary added to note content");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NoteViewModel] ERROR: Audio summarization failed: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task AddTopicsAndTimestampsAsync(AttachmentViewModel attachmentViewModel)
+        {
+            if (App.ChatClient == null || !attachmentViewModel.Attachment.IsProcessed || 
+                string.IsNullOrEmpty(attachmentViewModel.Attachment.FilenameForText))
+            {
+                return;
+            }
+
+            try
+            {
+                Debug.WriteLine($"[NoteViewModel] Starting topics and timestamps extraction for: {attachmentViewModel.Attachment.Filename}");
+
+                // Read the transcript file
+                var transcriptsFolder = await Utils.GetAttachmentsTranscriptsFolderAsync();
+                var transcriptFile = await transcriptsFolder.GetFileAsync(attachmentViewModel.Attachment.FilenameForText);
+                string transcriptText = await FileIO.ReadTextAsync(transcriptFile);
+
+                Debug.WriteLine($"[NoteViewModel] Transcript loaded, length: {transcriptText.Length} characters");
+
+                // Check if transcript is too large and needs chunking
+                const int MAX_CHUNK_SIZE = 8000; // Conservative limit for AI models
+                string topicsText = "\n\n## Topics\n";
+
+                if (transcriptText.Length <= MAX_CHUNK_SIZE)
+                {
+                    // Process normally for small transcripts
+                    CancellationTokenSource cts = new CancellationTokenSource();
+                    await foreach (var partialResult in App.ChatClient.ExtractTopicsAndTimestampsAsync(transcriptText, cts.Token))
+                    {
+                        topicsText += partialResult;
+                    }
+                }
+                else
+                {
+                    // Process in chunks for large transcripts
+                    Debug.WriteLine($"[NoteViewModel] Large transcript detected ({transcriptText.Length} chars), processing in chunks");
+                    topicsText = await ProcessLargeTranscriptTopics(transcriptText, MAX_CHUNK_SIZE, attachmentViewModel.Attachment.Id);
+                }
+
+                // Add the topics to the end of the note content
+                Content = Content + topicsText + "\n";
+                Debug.WriteLine($"[NoteViewModel] Topics and timestamps added to note content");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NoteViewModel] ERROR: Topics and timestamps extraction failed: {ex.Message}");
+                throw;
+            }
+        }
+
+        private async Task<string> ProcessLargeTranscriptSummary(string transcriptText, int maxChunkSize)
+        {
+            Debug.WriteLine($"[NoteViewModel] Processing large transcript summary in chunks");
+            
+            var chunks = SplitTranscriptIntoChunks(transcriptText, maxChunkSize);
+            var chunkSummaries = new List<string>();
+
+            Debug.WriteLine($"[NoteViewModel] Split transcript into {chunks.Count} chunks");
+
+            // Process each chunk
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                Debug.WriteLine($"[NoteViewModel] Processing summary chunk {i + 1}/{chunks.Count}");
+                
+                try
+                {
+                    string chunkSummary = "";
+                    CancellationTokenSource cts = new CancellationTokenSource();
+                    
+                    await foreach (var partialResult in App.ChatClient.SummarizeAudioTranscriptAsync(chunks[i], cts.Token))
+                    {
+                        chunkSummary += partialResult;
+                    }
+                    
+                    if (!string.IsNullOrWhiteSpace(chunkSummary))
+                    {
+                        chunkSummaries.Add(chunkSummary.Trim());
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[NoteViewModel] ERROR: Failed to process chunk {i + 1}: {ex.Message}");
+                    // Continue with other chunks
+                }
+            }
+
+            // Combine summaries
+            if (chunkSummaries.Count == 0)
+            {
+                return "\n\n## Summary\n• Unable to generate summary due to processing errors\n";
+            }
+            else if (chunkSummaries.Count == 1)
+            {
+                return "\n\n## Summary\n" + chunkSummaries[0] + "\n";
+            }
+            else
+            {
+                // If we have multiple chunk summaries, create a consolidated summary
+                string combinedSummaries = string.Join("\n\n", chunkSummaries);
+                
+                // If the combined summaries are still too long, just present them as sections
+                if (combinedSummaries.Length > maxChunkSize)
+                {
+                    var result = "\n\n## Summary\n";
+                    for (int i = 0; i < chunkSummaries.Count; i++)
+                    {
+                        result += $"### Part {i + 1}\n{chunkSummaries[i]}\n\n";
+                    }
+                    return result;
+                }
+                else
+                {
+                    // Try to create a final consolidated summary
+                    try
+                    {
+                        string finalSummary = "";
+                        CancellationTokenSource cts = new CancellationTokenSource();
+                        
+                        await foreach (var partialResult in App.ChatClient.SummarizeAudioTranscriptAsync(combinedSummaries, cts.Token))
+                        {
+                            finalSummary += partialResult;
+                        }
+                        
+                        return "\n\n## Summary\n" + finalSummary + "\n";
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[NoteViewModel] ERROR: Failed to create final summary: {ex.Message}");
+                        // Fall back to individual summaries
+                        var result = "\n\n## Summary\n";
+                        for (int i = 0; i < chunkSummaries.Count; i++)
+                        {
+                            result += $"### Part {i + 1}\n{chunkSummaries[i]}\n\n";
+                        }
+                        return result;
+                    }
+                }
+            }
+        }
+
+        private async Task<string> ProcessLargeTranscriptTopics(string transcriptText, int maxChunkSize, int attachmentId)
+        {
+            Debug.WriteLine($"[NoteViewModel] Processing large transcript topics in chunks");
+            
+            var chunks = SplitTranscriptIntoChunks(transcriptText, maxChunkSize);
+            var allTopics = new List<string>();
+
+            Debug.WriteLine($"[NoteViewModel] Split transcript into {chunks.Count} chunks");
+
+            // Process each chunk
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                Debug.WriteLine($"[NoteViewModel] Processing topics chunk {i + 1}/{chunks.Count}");
+                
+                try
+                {
+                    string chunkTopics = "";
+                    CancellationTokenSource cts = new CancellationTokenSource();
+                    
+                    await foreach (var partialResult in App.ChatClient.ExtractTopicsAndTimestampsAsync(chunks[i], cts.Token))
+                    {
+                        chunkTopics += partialResult;
+                    }
+                    
+                    if (!string.IsNullOrWhiteSpace(chunkTopics))
+                    {
+                        allTopics.Add(chunkTopics.Trim());
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[NoteViewModel] ERROR: Failed to process chunk {i + 1}: {ex.Message}");
+                    // Continue with other chunks
+                }
+            }
+
+            // Combine and format topics
+            if (allTopics.Count == 0)
+            {
+                return "\n\n## Topics\n• Unable to extract topics due to processing errors\n";
+            }
+
+            string combinedTopics = "\n\n## Topics\n" + string.Join("\n", allTopics) + "\n";
+            
+            // Make timestamps clickable
+            return MakeTimestampsClickable(combinedTopics, attachmentId);
+        }
+
+        private List<string> SplitTranscriptIntoChunks(string transcriptText, int maxChunkSize)
+        {
+            var chunks = new List<string>();
+            
+            // Try to split on timestamp boundaries first
+            var timestampPattern = @"<\|[\d.]+\|>";
+            var matches = Regex.Matches(transcriptText, timestampPattern);
+            
+            if (matches.Count > 1)
+            {
+                // Split based on timestamps to preserve context
+                var currentChunk = "";
+                var currentPosition = 0;
+                
+                foreach (Match match in matches)
+                {
+                    var nextSegment = transcriptText.Substring(currentPosition, match.Index - currentPosition + match.Length);
+                    
+                    if (currentChunk.Length + nextSegment.Length > maxChunkSize && !string.IsNullOrWhiteSpace(currentChunk))
+                    {
+                        chunks.Add(currentChunk.Trim());
+                        currentChunk = nextSegment;
+                    }
+                    else
+                    {
+                        currentChunk += nextSegment;
+                    }
+                    
+                    currentPosition = match.Index + match.Length;
+                }
+                
+                // Add remaining content
+                if (currentPosition < transcriptText.Length)
+                {
+                    currentChunk += transcriptText.Substring(currentPosition);
+                }
+                
+                if (!string.IsNullOrWhiteSpace(currentChunk))
+                {
+                    chunks.Add(currentChunk.Trim());
+                }
+            }
+            else
+            {
+                // Fall back to simple character-based chunking
+                for (int i = 0; i < transcriptText.Length; i += maxChunkSize)
+                {
+                    int chunkSize = Math.Min(maxChunkSize, transcriptText.Length - i);
+                    chunks.Add(transcriptText.Substring(i, chunkSize));
+                }
+            }
+            
+            Debug.WriteLine($"[NoteViewModel] Created {chunks.Count} chunks with max size {maxChunkSize}");
+            return chunks;
         }
 
         private void SaveTimerTick(object? sender, object e)
@@ -257,6 +540,53 @@ namespace Notes.ViewModels
             await FileIO.WriteTextAsync(file, Content);
 
             await SemanticIndex.Instance.AddOrReplaceContent(Content, Note.Id, "note", (o, p) => Debug.WriteLine($"Indexing note {Note.Title} {p * 100}%"));
+        }
+
+        private string MakeTimestampsClickable(string topicsText, int attachmentId)
+        {
+            // Pattern to match timestamps in format (MM:SS) or (H:MM:SS)
+            string pattern = @"\((\d{1,2}:\d{2}(?::\d{2})?)\)";
+            
+            return Regex.Replace(topicsText, pattern, match =>
+            {
+                string timestamp = match.Groups[1].Value;
+                // Create a clickable link format that includes visual formatting
+                // Format: **[(timestamp)](audio://attachmentId/timestamp)**
+                return $"**[({timestamp})](audio://{attachmentId}/{timestamp})**";
+            });
+        }
+
+        public static TimeSpan ParseTimestamp(string timestamp)
+        {
+            // Parse timestamps in format "MM:SS" or "H:MM:SS"
+            var parts = timestamp.Split(':');
+            if (parts.Length == 2)
+            {
+                // MM:SS format
+                return new TimeSpan(0, int.Parse(parts[0]), int.Parse(parts[1]));
+            }
+            else if (parts.Length == 3)
+            {
+                // H:MM:SS format
+                return new TimeSpan(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
+            }
+            
+            return TimeSpan.Zero;
+        }
+
+        public async Task AddAttachmentAsync(SoftwareBitmap bitmap)
+        {
+            // save bitmap to file
+            var attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
+            var file = await attachmentsFolder.CreateFileAsync(Guid.NewGuid().ToString() + ".png", CreationCollisionOption.GenerateUniqueName);
+            using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
+            {
+                var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+                encoder.SetSoftwareBitmap(bitmap);
+                await encoder.FlushAsync();
+            }
+
+            await AddAttachmentAsync(file);
         }
     }
 }
