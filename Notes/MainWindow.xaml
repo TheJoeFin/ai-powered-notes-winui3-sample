@@ -7,7 +7,6 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:local="using:Notes"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    xmlns:ui="using:CommunityToolkit.WinUI.UI"
     xmlns:viewmodels="using:Notes.ViewModels"
     mc:Ignorable="d">
     <Window.SystemBackdrop>
@@ -59,7 +58,8 @@
                                 <TextBlock>New</TextBlock>
                             </StackPanel>
                         </Button>
-                        <Button
+                        <ToggleButton
+                            x:Name="RecordButton"
                             Grid.Column="1"
                             Width="36"
                             Height="36"
@@ -68,8 +68,28 @@
                             HorizontalAlignment="Right"
                             Click="RecordButton_Click"
                             ToolTipService.ToolTip="Record Voice Note">
-                            <FontIcon FontFamily="Segoe MDL2 Assets" FontSize="14" Glyph="&#xE1D6;"/>
-                        </Button>
+                            <Grid>
+                                <!-- Recording indicator (red dot) -->
+                                <Ellipse x:Name="RecordingIndicator"
+                                         Width="6"
+                                         Height="6"
+                                         Fill="Red"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,2,2,0"
+                                         Visibility="Collapsed">
+                                    <Ellipse.RenderTransform>
+                                        <CompositeTransform TranslateX="8" TranslateY="-8"/>
+                                    </Ellipse.RenderTransform>
+                                </Ellipse>
+                                
+                                <!-- Microphone icon -->
+                                <FontIcon x:Name="MicrophoneIcon" 
+                                          FontFamily="Segoe MDL2 Assets" 
+                                          FontSize="14" 
+                                          Glyph="&#xE1D6;"/>
+                            </Grid>
+                        </ToggleButton>
                         <Button
                             Grid.Column="2"
                             Width="36"

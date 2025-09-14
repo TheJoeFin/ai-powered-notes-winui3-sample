@@ -9,6 +9,7 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.UI.Dispatching;
 
 namespace Notes
 {
@@ -21,6 +22,8 @@ namespace Notes
         public ViewModel VM;
         private AudioRecordingService _audioRecordingService;
         private bool _isRecording = false;
+        private DispatcherTimer _recordingTimer;
+        private DateTime _recordingStartTime;
 
         public MainWindow()
         {
@@ -38,6 +41,11 @@ namespace Notes
 
             // Initialize audio recording service
             _audioRecordingService = new AudioRecordingService();
+            
+            // Initialize recording timer
+            _recordingTimer = new DispatcherTimer();
+            _recordingTimer.Interval = TimeSpan.FromSeconds(1);
+            _recordingTimer.Tick += RecordingTimer_Tick;
         }
 
         public async Task SelectNoteById(int id, int? attachmentId = null, string? attachmentText = null)
@@ -64,6 +72,50 @@ namespace Notes
 
                     OpenAttachmentView(attachmentViewModel, attachmentText);
                 }
+            }
+        }
+
+        public async Task SeekToTimestampInAttachment(int attachmentId, string timestamp)
+        {
+            Debug.WriteLine($"[MainWindow] Seeking to timestamp {timestamp} in attachment {attachmentId}");
+
+            try
+            {
+                // Find the attachment
+                var context = await AppDataContext.GetCurrentAsync();
+                var attachment = context.Attachments.Where(a => a.Id == attachmentId).FirstOrDefault();
+                if (attachment == null)
+                {
+                    Debug.WriteLine($"[MainWindow] ERROR: Attachment {attachmentId} not found");
+                    return;
+                }
+
+                // Find the note containing this attachment
+                var note = context.Notes.Where(n => n.Id == attachment.NoteId).FirstOrDefault();
+                if (note == null)
+                {
+                    Debug.WriteLine($"[MainWindow] ERROR: Note for attachment {attachmentId} not found");
+                    return;
+                }
+
+                // Navigate to the note and open the attachment
+                await SelectNoteById(note.Id, attachmentId);
+
+                // Parse the timestamp
+                var timeSpan = NoteViewModel.ParseTimestamp(timestamp);
+                Debug.WriteLine($"[MainWindow] Parsed timestamp: {timeSpan}");
+
+                // Set the media player position in the attachment view
+                if (attachmentView != null && attachmentView.AttachmentVM?.Attachment?.Id == attachmentId)
+                {
+                    // Access the media player through the attachment view and seek to the timestamp
+                    attachmentView.SeekToTimestamp(timeSpan);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[MainWindow] ERROR: Failed to seek to timestamp: {ex.Message}");
+                Debug.WriteLine($"[MainWindow] Exception details: {ex}");
             }
         }
 
@@ -125,6 +177,9 @@ namespace Notes
                 Debug.WriteLine($"[MainWindow] ERROR: Recording operation failed: {ex.Message}");
                 Debug.WriteLine($"[MainWindow] Exception details: {ex}");
 
+                // Reset UI state on error
+                UpdateRecordingUI(false);
+
                 // Show error message to user
                 var dialog = new ContentDialog
                 {
@@ -159,15 +214,17 @@ namespace Notes
             }
 
             _isRecording = true;
+            _recordingStartTime = DateTime.Now;
+            _recordingTimer.Start();
+            UpdateRecordingUI(true);
             Debug.WriteLine($"[MainWindow] Recording started successfully: {recordingFile.Path}");
-
-            // TODO: Update UI to show recording state (change button icon, show recording indicator, etc.)
         }
 
         private async Task StopRecording()
         {
             Debug.WriteLine("[MainWindow] Stopping recording...");
 
+            _recordingTimer.Stop();
             var recordingFile = await _audioRecordingService.StopRecordingAsync();
 
             if (recordingFile == null)
@@ -177,10 +234,55 @@ namespace Notes
             }
 
             _isRecording = false;
+            UpdateRecordingUI(false);
             Debug.WriteLine($"[MainWindow] Recording stopped successfully: {recordingFile.Path}");
 
             // Add the recorded file as an attachment to the current note
             await AddRecordingToCurrentNote(recordingFile);
+        }
+
+        private void RecordingTimer_Tick(object sender, object e)
+        {
+            if (_isRecording)
+            {
+                var duration = DateTime.Now - _recordingStartTime;
+                var durationText = $"{duration.Minutes:D2}:{duration.Seconds:D2}";
+                
+                // Update tooltip with recording duration
+                ToolTipService.SetToolTip(RecordButton, $"Stop Recording ({durationText})");
+            }
+        }
+
+        private void UpdateRecordingUI(bool isRecording)
+        {
+            try
+            {
+                if (RecordButton != null)
+                {
+                    RecordButton.IsChecked = isRecording;
+                    
+                    // Update tooltip
+                    ToolTipService.SetToolTip(RecordButton, isRecording ? "Stop Recording (00:00)" : "Record Voice Note");
+                    
+                    // Show/hide recording indicator
+                    if (RecordingIndicator != null)
+                    {
+                        RecordingIndicator.Visibility = isRecording ? Visibility.Visible : Visibility.Collapsed;
+                    }
+                    
+                    // Change microphone icon color/style when recording
+                    if (MicrophoneIcon != null)
+                    {
+                        MicrophoneIcon.Foreground = isRecording 
+                            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Red)
+                            : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[MainWindow] ERROR: Failed to update recording UI: {ex.Message}");
+            }
         }
 
         private async Task AddRecordingToCurrentNote(Windows.Storage.StorageFile recordingFile)
