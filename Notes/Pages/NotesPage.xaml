@@ -284,7 +284,34 @@
                                     Background="#12242424">
                                 <Grid.ContextFlyout>
                                     <MenuFlyout>
-                                        <MenuFlyoutItem Text="Delete" Click="ContactDeleteMenuyItem_Click"/>
+                                        <!-- Audio/Video specific menu items -->
+                                        <MenuFlyoutItem Text="Summarize" 
+                                                        Click="SummarizeAudioMenuItem_Click"
+                                                        Visibility="{x:Bind local:NotesPage.GetAudioMenuItemVisibility(Attachment.Type, Attachment.IsProcessed), Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon>
+                                                <SymbolIcon Symbol="Document"/>
+                                            </MenuFlyoutItem.Icon>
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Generate a summary of the audio content and add it to the note"/>
+                                            </ToolTipService.ToolTip>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Add Topics and Timestamps" 
+                                                        Click="AddTopicsAndTimestampsMenuItem_Click"
+                                                        Visibility="{x:Bind local:NotesPage.GetAudioMenuItemVisibility(Attachment.Type, Attachment.IsProcessed), Mode=OneWay}">
+                                            <MenuFlyoutItem.Icon>
+                                                <SymbolIcon Symbol="Clock"/>
+                                            </MenuFlyoutItem.Icon>
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Extract key topics with clickable timestamps and add them to the note"/>
+                                            </ToolTipService.ToolTip>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutSeparator Visibility="{x:Bind local:NotesPage.GetAudioMenuItemVisibility(Attachment.Type, Attachment.IsProcessed), Mode=OneWay}"/>
+                                        <!-- Common menu items -->
+                                        <MenuFlyoutItem Text="Delete" Click="ContactDeleteMenuyItem_Click">
+                                            <MenuFlyoutItem.Icon>
+                                                <SymbolIcon Symbol="Delete"/>
+                                            </MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
                                     </MenuFlyout>
                                 </Grid.ContextFlyout>
                                 <StackPanel Orientation="Horizontal">
@@ -341,7 +368,8 @@
                     TextWrapping="Wrap"
                     Padding="48,24,48,48"
                     Unloaded="ContentsRichEditBox_Unloaded" 
-                    Style="{StaticResource NotesRichEditBoxStyle}"/>
+                    Style="{StaticResource NotesRichEditBoxStyle}"
+                    PointerPressed="ContentsRichEditBox_PointerPressed"/>
                 <Border
                     x:Name="AutoSuggestBorder"
                     HorizontalAlignment="Left"

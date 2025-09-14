@@ -60,7 +60,9 @@ namespace Notes.Pages
         {
             ContentsRichEditBox.SelectionFlyout.Opening += Menu_Opening;
             ContentsRichEditBox.ContextFlyout.Opening += Menu_Opening;
-
+            
+            // Enable hyperlink detection and handling
+            ContentsRichEditBox.Document.SetDefaultCharacterFormat(ContentsRichEditBox.Document.GetDefaultCharacterFormat());
         }
 
         private void ContentsRichEditBox_Unloaded(object sender, RoutedEventArgs e)
@@ -340,6 +342,13 @@ namespace Notes.Pages
             };
         }
 
+        public static Visibility GetAudioMenuItemVisibility(NoteAttachmentType type, bool isProcessed)
+        {
+            return (type == NoteAttachmentType.Audio || type == NoteAttachmentType.Video) && isProcessed 
+                ? Visibility.Visible 
+                : Visibility.Collapsed;
+        }
+
         private void TodosClicked(object sender, RoutedEventArgs e)
         {
             ViewModel.ShowTodos();
@@ -349,7 +358,126 @@ namespace Notes.Pages
         {
             var attachment = (sender as FrameworkElement).DataContext as AttachmentViewModel;
             ViewModel.RemoveAttachmentAsync(attachment);
+        }
 
+        private async void SummarizeAudioMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var attachment = (sender as FrameworkElement).DataContext as AttachmentViewModel;
+            if (attachment == null) return;
+
+            Debug.WriteLine($"[NotesPage] Starting audio summarization for: {attachment.Attachment.Filename}");
+
+            // Show progress ring or loading indicator
+            var progressDialog = new ContentDialog
+            {
+                Title = "Generating Summary",
+                Content = new StackPanel
+                {
+                    Children =
+                    {
+                        new ProgressRing { IsActive = true, HorizontalAlignment = HorizontalAlignment.Center },
+                        new TextBlock { Text = "Analyzing audio content and generating summary...", Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Center }
+                    }
+                },
+                XamlRoot = this.XamlRoot
+            };
+
+            try
+            {
+                // Start the summarization task
+                var summarizationTask = ViewModel.SummarizeAudioAttachmentAsync(attachment);
+                
+                // Show the progress dialog
+                var dialogTask = progressDialog.ShowAsync();
+                
+                // Wait for summarization to complete
+                await summarizationTask;
+                
+                // Close the progress dialog
+                progressDialog.Hide();
+                
+                // Update the RichEditBox content
+                ContentsRichEditBox.Document.SetText(Microsoft.UI.Text.TextSetOptions.None, ViewModel.Content);
+                
+                Debug.WriteLine($"[NotesPage] Audio summarization completed and added to note");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NotesPage] ERROR: Audio summarization failed: {ex.Message}");
+                
+                // Close progress dialog first
+                progressDialog.Hide();
+                
+                // Show error to user
+                var errorDialog = new ContentDialog
+                {
+                    Title = "Summarization Failed",
+                    Content = $"Failed to summarize audio: {ex.Message}",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.XamlRoot
+                };
+                await errorDialog.ShowAsync();
+            }
+        }
+
+        private async void AddTopicsAndTimestampsMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var attachment = (sender as FrameworkElement).DataContext as AttachmentViewModel;
+            if (attachment == null) return;
+
+            Debug.WriteLine($"[NotesPage] Starting topics and timestamps extraction for: {attachment.Attachment.Filename}");
+
+            // Show progress ring or loading indicator
+            var progressDialog = new ContentDialog
+            {
+                Title = "Extracting Topics",
+                Content = new StackPanel
+                {
+                    Children =
+                    {
+                        new ProgressRing { IsActive = true, HorizontalAlignment = HorizontalAlignment.Center },
+                        new TextBlock { Text = "Analyzing audio content and extracting topics with timestamps...", Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Center }
+                    }
+                },
+                XamlRoot = this.XamlRoot
+            };
+
+            try
+            {
+                // Start the extraction task
+                var extractionTask = ViewModel.AddTopicsAndTimestampsAsync(attachment);
+                
+                // Show the progress dialog
+                var dialogTask = progressDialog.ShowAsync();
+                
+                // Wait for extraction to complete
+                await extractionTask;
+                
+                // Close the progress dialog
+                progressDialog.Hide();
+                
+                // Update the RichEditBox content
+                ContentsRichEditBox.Document.SetText(Microsoft.UI.Text.TextSetOptions.None, ViewModel.Content);
+                
+                Debug.WriteLine($"[NotesPage] Topics and timestamps extraction completed and added to note");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NotesPage] ERROR: Topics and timestamps extraction failed: {ex.Message}");
+                
+                // Close progress dialog first
+                progressDialog.Hide();
+                
+                // Show error to user
+                var errorDialog = new ContentDialog
+                {
+                    Title = "Topics Extraction Failed",
+                    Content = $"Failed to extract topics and timestamps: {ex.Message}",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.XamlRoot
+                };
+                await errorDialog.ShowAsync();
+            }
         }
 
         private void AttachmentsListView_ItemClick(object sender, ItemClickEventArgs e)
@@ -366,6 +494,79 @@ namespace Notes.Pages
         private async void Grid_Drop(object sender, DragEventArgs e)
         {
             await HandleDataPackage(e.DataView);
+        }
+
+        private async void ContentsRichEditBox_PointerPressed(object sender, PointerRoutedEventArgs e)
+        {
+            try
+            {
+                // Get the position of the pointer
+                var position = e.GetCurrentPoint(ContentsRichEditBox);
+                
+                // Get the text range at that position
+                var textRange = ContentsRichEditBox.Document.GetRangeFromPoint(
+                    new Windows.Foundation.Point(position.Position.X, position.Position.Y), 
+                    Microsoft.UI.Text.PointOptions.ClientCoordinates);
+                
+                if (textRange != null)
+                {
+                    // Expand the range to get the full word/link
+                    textRange.Expand(Microsoft.UI.Text.TextRangeUnit.Word);
+                    string clickedText = textRange.Text;
+                    
+                    Debug.WriteLine($"[NotesPage] Clicked text: '{clickedText}'");
+                    
+                    // Check if it's a timestamp link in our format: [timestamp](audio://attachmentId/timestamp)
+                    var linkPattern = @"\[(\([^)]+\))\]\(audio://(\d+)/([^)]+)\)";
+                    var match = System.Text.RegularExpressions.Regex.Match(clickedText, linkPattern);
+                    
+                    if (match.Success)
+                    {
+                        string timestamp = match.Groups[3].Value;
+                        int attachmentId = int.Parse(match.Groups[2].Value);
+                        
+                        Debug.WriteLine($"[NotesPage] Detected timestamp link click: {timestamp} for attachment {attachmentId}");
+                        
+                        // Navigate to the timestamp
+                        await MainWindow.Instance.SeekToTimestampInAttachment(attachmentId, timestamp);
+                        
+                        e.Handled = true;
+                    }
+                    else
+                    {
+                        // Try to find a broader range that might contain the link
+                        var lineRange = ContentsRichEditBox.Document.GetRangeFromPoint(
+                            new Windows.Foundation.Point(position.Position.X, position.Position.Y), 
+                            Microsoft.UI.Text.PointOptions.ClientCoordinates);
+                        lineRange.Expand(Microsoft.UI.Text.TextRangeUnit.Line);
+                        string lineText = lineRange.Text;
+                        
+                        var lineMatch = System.Text.RegularExpressions.Regex.Match(lineText, linkPattern);
+                        if (lineMatch.Success)
+                        {
+                            // Check if the click was near the timestamp part
+                            var timestampMatch = System.Text.RegularExpressions.Regex.Match(lineText, @"\[(\([^)]+\))\]");
+                            if (timestampMatch.Success)
+                            {
+                                string timestamp = lineMatch.Groups[3].Value;
+                                int attachmentId = int.Parse(lineMatch.Groups[2].Value);
+                                
+                                Debug.WriteLine($"[NotesPage] Detected timestamp link click in line: {timestamp} for attachment {attachmentId}");
+                                
+                                // Navigate to the timestamp
+                                await MainWindow.Instance.SeekToTimestampInAttachment(attachmentId, timestamp);
+                                
+                                e.Handled = true;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[NotesPage] ERROR: Failed to handle pointer press: {ex.Message}");
+                Debug.WriteLine($"[NotesPage] Exception details: {ex}");
+            }
         }
     }
 }
