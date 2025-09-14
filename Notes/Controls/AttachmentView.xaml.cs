@@ -354,5 +354,41 @@ namespace Notes.Controls
                 transcriptBlocksListView.ScrollIntoView(block, ScrollIntoViewAlignment.Leading);
             }
         }
+
+        public void SeekToTimestamp(TimeSpan timestamp)
+        {
+            Debug.WriteLine($"[AttachmentView] Seeking to timestamp: {timestamp}");
+
+            try
+            {
+                if (AttachmentVM?.Attachment?.Type == NoteAttachmentType.Audio || 
+                    AttachmentVM?.Attachment?.Type == NoteAttachmentType.Video)
+                {
+                    // Set the media player position
+                    mediaPlayer.MediaPlayer.Position = timestamp;
+                    
+                    // Find and select the corresponding transcription block
+                    var correspondingBlock = TranscriptionBlocks.FirstOrDefault(block => 
+                        block.Start <= timestamp && block.End >= timestamp);
+                    
+                    if (correspondingBlock != null)
+                    {
+                        transcriptBlocksListView.SelectedItem = correspondingBlock;
+                        ScrollTranscriptionToItem(correspondingBlock);
+                    }
+
+                    Debug.WriteLine($"[AttachmentView] Successfully seeked to {timestamp}");
+                }
+                else
+                {
+                    Debug.WriteLine($"[AttachmentView] WARNING: Cannot seek in non-audio/video attachment");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AttachmentView] ERROR: Failed to seek to timestamp: {ex.Message}");
+                Debug.WriteLine($"[AttachmentView] Exception details: {ex}");
+            }
+        }
     }
 }
