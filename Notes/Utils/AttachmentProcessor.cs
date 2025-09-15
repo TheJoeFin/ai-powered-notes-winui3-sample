@@ -129,7 +129,7 @@ public static class AttachmentProcessor
         Debug.WriteLine("===== [AttachmentProcessor] Process() EXIT =====");
     }
 
-    private static async Task ProcessImage(Models.Attachment attachment, EventHandler<float>? progress = null)
+    private static async Task ProcessImage(Attachment attachment, EventHandler<float>? progress = null)
     {
         Debug.WriteLine($"[AttachmentProcessor] Starting image processing for: {attachment.Filename}");
 
@@ -209,7 +209,7 @@ public static class AttachmentProcessor
                 Debug.WriteLine($"[AttachmentProcessor] File size: {(await file.GetBasicPropertiesAsync()).Size} bytes");
 
                 Debug.WriteLine("[AttachmentProcessor] Starting Whisper transcription...");
-                object transcribedChunks = await Whisper.TranscribeAsync(file, (o, p) =>
+                List<WhisperTranscribedChunk> transcribedChunks = await Whisper.TranscribeAsync(file, (o, p) =>
                 {
                     Debug.WriteLine($"[AttachmentProcessor] Transcription progress: {p * 100:F1}%");
                     AttachmentProcessed?.Invoke(null, new AttachmentProcessedEventArgs

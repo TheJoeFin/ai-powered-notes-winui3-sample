@@ -52,7 +52,7 @@ public static class WaveformRenderer
         {
             imageFile = await attachmentsFolder.CreateFileAsync(waveformFileName, CreationCollisionOption.FailIfExists);
             using Stream stream = await imageFile.OpenStreamForWriteAsync();
-            System.Drawing.Image image = Render(audioFile, 400, 800, PeakProvider.Average);
+            Image image = Render(audioFile, 400, 800, PeakProvider.Average);
             image.Save(stream, ImageFormat.Png);
         }
         catch

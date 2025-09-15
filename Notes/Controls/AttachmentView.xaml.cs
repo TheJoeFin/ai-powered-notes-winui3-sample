@@ -277,7 +277,7 @@ public sealed partial class AttachmentView : UserControl
             MaxWidth = 800,
             Margin = new Thickness(0, 0, 0, 20),
             // Add shadow effect
-            Shadow = new Microsoft.UI.Xaml.Media.ThemeShadow(),
+            Shadow = new ThemeShadow(),
             Translation = new System.Numerics.Vector3(0, 0, 8)
         };
 
@@ -376,7 +376,7 @@ public sealed partial class AttachmentView : UserControl
                 break;
 
             case PdfContentType.Table:
-                textBlock.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
+                textBlock.FontFamily = new FontFamily("Consolas");
                 textBlock.FontSize = 13;
                 // Format table content with proper spacing
                 FormatTableContent(textBlock, element.Text);
@@ -467,7 +467,7 @@ public sealed partial class AttachmentView : UserControl
         TextBlock textBlock = new()
         {
             Text = line.Replace("\t", "    "),
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+            FontFamily = new FontFamily("Segoe UI"),
             FontSize = 14,
             TextWrapping = TextWrapping.Wrap,
             IsTextSelectionEnabled = true,
@@ -504,7 +504,7 @@ public sealed partial class AttachmentView : UserControl
         TextBlock textBlock = new()
         {
             Text = paragraphText.ToString(),
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+            FontFamily = new FontFamily("Segoe UI"),
             FontSize = 14,
             LineHeight = 22,
             TextWrapping = TextWrapping.Wrap,
@@ -561,7 +561,7 @@ public sealed partial class AttachmentView : UserControl
         // Table/structured data
         else if (IsStructuredData(original))
         {
-            textBlock.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
+            textBlock.FontFamily = new FontFamily("Consolas");
             textBlock.FontSize = 12;
             textBlock.Text = original.Replace("\t", "    ");
 
@@ -674,7 +674,7 @@ public sealed partial class AttachmentView : UserControl
 
         FontIcon errorIcon = new()
         {
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe Fluent Icons"),
+            FontFamily = new FontFamily("Segoe Fluent Icons"),
             Glyph = "\uE7BA", // Error icon
             FontSize = 24,
             Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed)

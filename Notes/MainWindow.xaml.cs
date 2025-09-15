@@ -140,7 +140,7 @@ public sealed partial class MainWindow : Window
         navView.SelectedItem = note;
     }
 
-    private void navView_SelectionChanged(NavigationView sender, Microsoft.UI.Xaml.Controls.NavigationViewSelectionChangedEventArgs args)
+    private void navView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (args.SelectedItem is NoteViewModel note)
         {
@@ -288,7 +288,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task AddRecordingToCurrentNote(Windows.Storage.StorageFile recordingFile)
+    private async Task AddRecordingToCurrentNote(StorageFile recordingFile)
     {
         Debug.WriteLine($"[MainWindow] Adding recording to current note: {recordingFile.Path}");
 

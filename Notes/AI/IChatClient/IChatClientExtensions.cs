@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.AI;
+using Microsoft.Windows.AI.Text;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -27,21 +28,57 @@ public static class IChatClientExtensions
         }
     }
 
-    public static IAsyncEnumerable<string> SummarizeTextAsync(this IChatClient client, string userText, CancellationToken ct = default)
+    public static async IAsyncEnumerable<string> SummarizeTextAsync(this IChatClient client, string userText, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        return client.InferStreaming("", $"Summarize this text in three to five bullet points:\r {userText}", ct);
+        // Try to use Windows AI summarizer first
+        string? windowsAiResult = await TryWindowsAiSummarizeAsync(userText, "SummarizeTextAsync");
+        if (windowsAiResult != null)
+        {
+            yield return windowsAiResult;
+            yield break;
+        }
+
+        // Fallback to chat client
+        await foreach (string chunk in client.InferStreaming("", $"Summarize this text in three to five bullet points:\r {userText}", ct))
+        {
+            yield return chunk;
+        }
     }
 
-    public static IAsyncEnumerable<string> SummarizeImageTextAsync(this IChatClient client, string imageText, CancellationToken ct = default)
+    public static async IAsyncEnumerable<string> SummarizeImageTextAsync(this IChatClient client, string imageText, [EnumeratorCancellation] CancellationToken ct = default)
     {
+        // Try to use Windows AI summarizer first
+        string? windowsAiResult = await TryWindowsAiSummarizeAsync(imageText, "SummarizeImageTextAsync");
+        if (windowsAiResult != null)
+        {
+            yield return windowsAiResult;
+            yield break;
+        }
+
+        // Fallback to chat client
         string systemMessage = "Summarize the text extracted from an image in 3-5 clear bullet points. Focus on the main information and key details found in the image.";
-        return client.InferStreaming(systemMessage, imageText, ct);
+        await foreach (string chunk in client.InferStreaming(systemMessage, imageText, ct))
+        {
+            yield return chunk;
+        }
     }
 
-    public static IAsyncEnumerable<string> SummarizeAudioTranscriptAsync(this IChatClient client, string transcriptText, CancellationToken ct = default)
+    public static async IAsyncEnumerable<string> SummarizeAudioTranscriptAsync(this IChatClient client, string transcriptText, [EnumeratorCancellation] CancellationToken ct = default)
     {
+        // Try to use Windows AI summarizer first
+        string? windowsAiResult = await TryWindowsAiSummarizeAsync(transcriptText, "SummarizeAudioTranscriptAsync");
+        if (windowsAiResult != null)
+        {
+            yield return windowsAiResult;
+            yield break;
+        }
+
+        // Fallback to chat client
         string systemMessage = "Summarize this audio transcript in 3-5 bullet points. Focus on the key topics and main points discussed.";
-        return client.InferStreaming(systemMessage, transcriptText, ct);
+        await foreach (string chunk in client.InferStreaming(systemMessage, transcriptText, ct))
+        {
+            yield return chunk;
+        }
     }
 
     public static IAsyncEnumerable<string> ExtractTopicsAndTimestampsAsync(this IChatClient client, string transcriptText, CancellationToken ct = default)
@@ -103,11 +140,22 @@ Only include significant topics (3-7 topics maximum). Use the timestamp from whe
         return client.InferStreaming($"{systemMessage}: {content}", question, ct);
     }
 
-    public static IAsyncEnumerable<string> SummarizePdfTextAsync(this IChatClient client, string pdfText, CancellationToken ct = default)
+    public static async IAsyncEnumerable<string> SummarizePdfTextAsync(this IChatClient client, string pdfText, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        // For PDF summarization, use a simpler prompt that works better with local models
+        // Try to use Windows AI summarizer first
+        string? windowsAiResult = await TryWindowsAiSummarizeAsync(pdfText, "SummarizePdfTextAsync");
+        if (windowsAiResult != null)
+        {
+            yield return windowsAiResult;
+            yield break;
+        }
+
+        // Fallback to chat client - use a simpler prompt that works better with local models
         string systemMessage = "Summarize this PDF document in 3-5 clear bullet points. Focus on the main topics and key information.";
-        return client.InferStreaming(systemMessage, pdfText, ct);
+        await foreach (string chunk in client.InferStreaming(systemMessage, pdfText, ct))
+        {
+            yield return chunk;
+        }
     }
 
     public static async Task<string> SummarizeImageTextLocalAsync(string imageText, CancellationToken ct = default)
@@ -258,7 +306,7 @@ Only include significant topics (3-7 topics maximum). Use the timestamp from whe
             summary.AppendLine("**Main Sections:**");
             foreach (string? header in headers)
             {
-                string cleanHeader = header.Replace("===", "").Replace("Page", "").Trim();
+                string cleanHeader = header.Replace("=== Page", "").Trim();
                 if (!string.IsNullOrWhiteSpace(cleanHeader))
                     summary.AppendLine($"• {cleanHeader}");
             }
@@ -526,5 +574,33 @@ Only include significant topics (3-7 topics maximum). Use the timestamp from whe
 
         string title = string.Join(" ", meaningfulWords);
         return string.IsNullOrWhiteSpace(title) ? "Discussion" : title;
+    }
+
+    private static async Task<string?> TryWindowsAiSummarizeAsync(string text, string methodName)
+    {
+        try
+        {
+            Debug.WriteLine($"[{methodName}] Attempting to use Windows AI summarizer...");
+
+            using var languageModel = await LanguageModel.CreateAsync();
+            if (languageModel != null)
+            {
+                var textSummarizer = new TextSummarizer(languageModel);
+                var result = await textSummarizer.SummarizeAsync(text);
+
+                Debug.WriteLine($"[{methodName}] Successfully used Windows AI summarizer");
+                return result.Text;
+            }
+            else
+            {
+                Debug.WriteLine($"[{methodName}] Windows AI summarizer not available, falling back to chat client");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[{methodName}] Windows AI summarizer failed: {ex.Message}, falling back to chat client");
+        }
+
+        return null;
     }
 }

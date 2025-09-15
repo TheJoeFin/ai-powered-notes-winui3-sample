@@ -643,7 +643,7 @@ public sealed partial class NotesPage : Page
 
             // Get the text range at that position
             ITextRange textRange = ContentsRichEditBox.Document.GetRangeFromPoint(
-                new Windows.Foundation.Point(position.Position.X, position.Position.Y),
+                new Point(position.Position.X, position.Position.Y),
                 Microsoft.UI.Text.PointOptions.ClientCoordinates);
 
             if (textRange != null)
@@ -674,7 +674,7 @@ public sealed partial class NotesPage : Page
                 {
                     // Try to find a broader range that might contain the link
                     ITextRange lineRange = ContentsRichEditBox.Document.GetRangeFromPoint(
-                        new Windows.Foundation.Point(position.Position.X, position.Position.Y),
+                        new Point(position.Position.X, position.Position.Y),
                         Microsoft.UI.Text.PointOptions.ClientCoordinates);
                     lineRange.Expand(Microsoft.UI.Text.TextRangeUnit.Line);
                     string lineText = lineRange.Text;

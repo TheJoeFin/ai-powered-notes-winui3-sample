@@ -410,7 +410,7 @@ public static class PdfProcessor
         return result.ToString();
     }
 
-    private static string ExtractTextFromBlock(UglyToad.PdfPig.DocumentLayoutAnalysis.TextBlock block)
+    private static string ExtractTextFromBlock(TextBlock block)
     {
         // Extract text from all words in the block, maintaining proper spacing
         IOrderedEnumerable<Word> blockWords = block.TextLines
@@ -448,7 +448,7 @@ public static class PdfProcessor
         return result.ToString();
     }
 
-    private static BlockType DetermineBlockType(UglyToad.PdfPig.DocumentLayoutAnalysis.TextBlock block)
+    private static BlockType DetermineBlockType(TextBlock block)
     {
         string text = ExtractTextFromBlock(block).Trim();
         PdfRectangle boundingBox = block.BoundingBox;
@@ -497,7 +497,7 @@ public static class PdfProcessor
         return bytes;
     }
 
-    private static PdfTextElement CreateAdvancedTextElement(UglyToad.PdfPig.DocumentLayoutAnalysis.TextBlock block)
+    private static PdfTextElement CreateAdvancedTextElement(TextBlock block)
     {
         string text = ExtractTextFromBlock(block);
         if (string.IsNullOrWhiteSpace(text)) return null;
