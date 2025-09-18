@@ -14,11 +14,16 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.Globalization;
+using Windows.Graphics.Imaging;
 using Windows.Media.Core;
+using Windows.Media.Ocr;
 using Windows.Storage;
+using Windows.Storage.Streams;
 using Windows.UI;
 
 // To learn more about WinUI, the WinUI project structure,
@@ -28,11 +33,13 @@ namespace Notes.Controls;
 
 public sealed partial class AttachmentView : UserControl
 {
-    private readonly CancellationTokenSource _cts;
+    private CancellationTokenSource? _cts;
     private readonly DispatcherQueue _dispatcher;
     private Timer _timer;
 
     public ObservableCollection<TranscriptionBlock> TranscriptionBlocks { get; set; } = [];
+    public ObservableCollection<string> PdfDebugLogs { get; } = [];
+
     public AttachmentViewModel AttachmentVM { get; set; }
     public bool AutoScrollEnabled { get; set; } = true;
 
@@ -54,6 +61,7 @@ public sealed partial class AttachmentView : UserControl
     public void Hide()
     {
         TranscriptionBlocks.Clear();
+        PdfDebugLogs.Clear();
         transcriptLoadingProgressRing.IsActive = false;
         if (pdfLoadingProgressRing != null)
             pdfLoadingProgressRing.IsActive = false;
@@ -83,6 +91,7 @@ public sealed partial class AttachmentView : UserControl
     public async Task UpdateAttachment(AttachmentViewModel attachment, string? attachmentText = null)
     {
         AttachmentImageTextCanvas.Children.Clear();
+        PdfDebugLogs.Clear();
 
         AttachmentVM = attachment;
         StorageFolder attachmentsFolder = await Utils.GetAttachmentsFolderAsync();
@@ -125,6 +134,7 @@ public sealed partial class AttachmentView : UserControl
         Debug.WriteLine($"[AttachmentView] Loading PDF content for: {fileName}");
         Debug.WriteLine($"[AttachmentView] Attachment IsProcessed: {AttachmentVM.Attachment.IsProcessed}");
         Debug.WriteLine($"[AttachmentView] FilenameForText: {AttachmentVM.Attachment.FilenameForText}");
+        PdfDebugLogs.Clear();
 
         try
         {
@@ -235,7 +245,6 @@ public sealed partial class AttachmentView : UserControl
             if (!string.IsNullOrEmpty(searchText))
             {
                 Debug.WriteLine($"[AttachmentView] Searching for text in PDF: {searchText}");
-                // TODO: Implement search highlighting
             }
 
             if (pdfLoadingProgressRing != null)
@@ -251,64 +260,185 @@ public sealed partial class AttachmentView : UserControl
         }
     }
 
-    private void DisplayPdfPages(PdfPageData pdfData)
+    private void DisplayPdfPages(PdfPageData data)
     {
         if (pdfPagesContainer == null) return;
-
         pdfPagesContainer.Children.Clear();
 
-        foreach (PdfPageInfo page in pdfData.Pages)
+        foreach (PdfPageInfo page in data.Pages)
         {
-            Border pageContainer = CreatePdfPageElement(page);
-            pdfPagesContainer.Children.Add(pageContainer);
+            Border element = CreatePdfPageElement(page);
+            pdfPagesContainer.Children.Add(element);
         }
     }
 
-    private Border CreatePdfPageElement(PdfPageInfo pageInfo)
+    private void DisplaySimplePdfText(string pdfText)
     {
-        // Create a paper-like container for each page
+        if (pdfPagesContainer == null) return;
+        pdfPagesContainer.Children.Clear();
+
+        // Split by page markers if present
+        string[] parts = pdfText.Split("=== Page", StringSplitOptions.RemoveEmptyEntries);
+        int pageNumber = 0;
+        foreach (string part in parts)
+        {
+            string content = part;
+            int idx = part.IndexOf("===", StringComparison.Ordinal);
+            if (idx >= 0)
+            {
+                // Remove header like " 1 ==="
+                int headerEnd = part.IndexOf('\n', StringComparison.Ordinal);
+                if (headerEnd > 0) content = part[(headerEnd + 1)..];
+            }
+
+            string pageText = content.Trim();
+            if (string.IsNullOrWhiteSpace(pageText)) continue;
+
+            PdfPageInfo pageInfo = new()
+            {
+                PageNumber = ++pageNumber,
+                FormattedText = pageText
+            };
+
+            Border pageElement = CreatePdfPageElement(pageInfo);
+            pdfPagesContainer.Children.Add(pageElement);
+        }
+
+        if (pageNumber == 0)
+        {
+            // No markers, show as single page
+            PdfPageInfo pageInfo = new() { PageNumber = 1, FormattedText = pdfText };
+            pdfPagesContainer.Children.Add(CreatePdfPageElement(pageInfo));
+        }
+    }
+
+    private Border CreatePdfPageElement(PdfPageInfo page)
+    {
         Border pageContainer = new()
         {
             Background = new SolidColorBrush(Microsoft.UI.Colors.White),
-            BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.LightGray),
+            BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Gainsboro),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            MinWidth = 600,
-            MaxWidth = 800,
-            Margin = new Thickness(0, 0, 0, 20),
-            // Add shadow effect
-            Shadow = new ThemeShadow(),
-            Translation = new System.Numerics.Vector3(0, 0, 8)
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12),
+            Margin = new Thickness(10),
+            HorizontalAlignment = HorizontalAlignment.Center
         };
 
-        StackPanel pageContent = new()
+        Grid pageGrid = new()
         {
-            Padding = new Thickness(40, 50, 40, 50)
-        };
-
-        // Page number header
-        TextBlock pageHeader = new()
-        {
-            Text = $"Page {pageInfo.PageNumber}",
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 20)
+            VerticalAlignment = VerticalAlignment.Top
         };
-        pageContent.Children.Add(pageHeader);
 
-        // Use structured content if available, otherwise fall back to formatted text
-        if (pageInfo.StructuredContent != null && pageInfo.StructuredContent.Any())
+        pageContainer.Child = pageGrid;
+
+        // If we have a rendered image, show it with an overlay canvas for text
+        if (page.ImageBytes != null && page.ImageBytes.Length > 0)
         {
-            CreateStructuredContent(pageContent, pageInfo.StructuredContent);
+            Grid imageHost = new();
+
+            Image image = new()
+            {
+                Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+
+            try
+            {
+                InMemoryRandomAccessStream ras = new();
+                ras.WriteAsync(page.ImageBytes.AsBuffer()).AsTask().Wait();
+                ras.Seek(0);
+                BitmapImage bitmapImage = new();
+                bitmapImage.SetSource(ras);
+                image.Source = bitmapImage;
+            }
+            catch (Exception ex)
+            {
+                PdfDebugLogs.Add($"Failed to set page image: {ex.Message}");
+            }
+
+            Canvas overlay = new()
+            {
+                IsHitTestVisible = false
+            };
+
+            // If we know image pixel size, set overlay size to match
+            if (page.ImagePixelWidth.HasValue && page.ImagePixelHeight.HasValue)
+            {
+                overlay.Width = page.ImagePixelWidth.Value;
+                overlay.Height = page.ImagePixelHeight.Value;
+            }
+
+            imageHost.Children.Add(image);
+            imageHost.Children.Add(overlay);
+            pageGrid.Children.Add(imageHost);
+
+            // Overlay structured text if available
+            if (page.StructuredContent != null && page.StructuredContent.Count > 0 &&
+                page.ImagePixelWidth.HasValue && page.ImagePixelHeight.HasValue &&
+                page.RenderScaleX > 0 && page.RenderScaleY > 0)
+            {
+                double cropTop = page.CropBottom + page.CropHeight; // PDF coordinates origin at bottom-left
+                foreach (PdfTextElement e in page.StructuredContent)
+                {
+                    TextBlock tb = new()
+                    {
+                        Text = e.Text,
+                        FontSize = e.ElementType == PdfContentType.Header ? 16 : 13,
+                        Foreground = new SolidColorBrush(Microsoft.UI.Colors.Black),
+                        Opacity = 0.85,
+                        TextWrapping = TextWrapping.Wrap,
+                        IsTextSelectionEnabled = true
+                    };
+
+                    double left = (e.Left - page.CropLeft) * page.RenderScaleX;
+                    double top = (cropTop - e.Top) * page.RenderScaleY;
+
+                    Canvas.SetLeft(tb, Math.Max(0, left));
+                    Canvas.SetTop(tb, Math.Max(0, top));
+
+                    overlay.Children.Add(tb);
+                }
+            }
+
+            // Also add formatted text below the image for readability if present and no structured content
+            if ((page.StructuredContent == null || page.StructuredContent.Count == 0) && !string.IsNullOrWhiteSpace(page.FormattedText))
+            {
+                StackPanel textContainer = new()
+                {
+                    Margin = new Thickness(0, 12, 0, 0)
+                };
+                CreateFormattedTextContent(textContainer, page.FormattedText);
+                pageGrid.Children.Add(textContainer);
+            }
         }
         else
         {
-            // Fallback to enhanced formatted text display
-            CreateFormattedTextContent(pageContent, pageInfo.FormattedText ?? pageInfo.Text);
+            // No image, show text content
+            StackPanel container = new();
+            if (page.StructuredContent != null && page.StructuredContent.Count > 0)
+            {
+                CreateStructuredContent(container, page.StructuredContent);
+            }
+            else if (!string.IsNullOrWhiteSpace(page.FormattedText))
+            {
+                CreateFormattedTextContent(container, page.FormattedText);
+            }
+            else if (!string.IsNullOrWhiteSpace(page.Text))
+            {
+                TextBlock tb = new()
+                {
+                    Text = page.Text,
+                    TextWrapping = TextWrapping.Wrap,
+                    IsTextSelectionEnabled = true
+                };
+                container.Children.Add(tb);
+            }
+            pageGrid.Children.Add(container);
         }
 
-        pageContainer.Child = pageContent;
         return pageContainer;
     }
 
@@ -326,7 +456,6 @@ public sealed partial class AttachmentView : UserControl
                 Margin = GetMarginForElement(element)
             };
 
-            // Apply styling based on content type
             ApplyContentTypeFormatting(textBlock, element);
 
             container.Children.Add(textBlock);
@@ -363,9 +492,8 @@ public sealed partial class AttachmentView : UserControl
             case PdfContentType.ListItem:
                 textBlock.FontSize = 14;
                 // Create a more structured list appearance
-                if (element.Text.StartsWith("•") || element.Text.StartsWith("-") || element.Text.StartsWith("*"))
+                if (element.Text.StartsWith("â€¢") || element.Text.StartsWith("-") || element.Text.StartsWith("*"))
                 {
-                    // Already has bullet, just style it
                     textBlock.Margin = new Thickness(20, 3, 0, 3);
                 }
                 else if (System.Text.RegularExpressions.Regex.IsMatch(element.Text, @"^\d+\.\s"))
@@ -394,22 +522,6 @@ public sealed partial class AttachmentView : UserControl
         // Convert tabs to proper spacing for table-like appearance
         string formattedText = text.Replace("\t", "    ");
         textBlock.Text = formattedText;
-
-        // Add subtle background for table rows
-        StackPanel? parentContainer = textBlock.Parent as StackPanel;
-        if (parentContainer != null)
-        {
-            Border border = new()
-            {
-                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(10, 0, 0, 0)),
-                Padding = new Thickness(8, 4, 8, 4),
-                CornerRadius = new CornerRadius(2),
-                Child = textBlock
-            };
-
-            // We'll need to replace the textblock with the border
-            // This is a simplified approach - in practice you'd want to structure this differently
-        }
     }
 
     private void CreateFormattedTextContent(StackPanel container, string formattedText)
@@ -551,12 +663,6 @@ public sealed partial class AttachmentView : UserControl
         else if (IsListItem(trimmed))
         {
             textBlock.Margin = new Thickness(20, 3, 0, 3);
-
-            // Style different list types
-            if (trimmed.StartsWith("•"))
-            {
-                textBlock.Text = "? " + trimmed[1..].Trim();
-            }
         }
         // Table/structured data
         else if (IsStructuredData(original))
@@ -564,17 +670,6 @@ public sealed partial class AttachmentView : UserControl
             textBlock.FontFamily = new FontFamily("Consolas");
             textBlock.FontSize = 12;
             textBlock.Text = original.Replace("\t", "    ");
-
-            // Add background for table-like content
-            Border border = new()
-            {
-                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(15, 100, 100, 100)),
-                Padding = new Thickness(8, 4, 8, 4),
-                CornerRadius = new CornerRadius(3),
-                Margin = new Thickness(0, 2, 0, 2)
-            };
-
-            // This would need to be handled differently in the container structure
             textBlock.Margin = new Thickness(8, 4, 8, 4);
         }
         // Contact info or addresses
@@ -612,8 +707,7 @@ public sealed partial class AttachmentView : UserControl
 
     private bool IsListItem(string line)
     {
-        return line.StartsWith("•") || line.StartsWith("-") || line.StartsWith("*") ||
-               line.StartsWith("?") || line.StartsWith("?") ||
+        return line.StartsWith("â€¢") || line.StartsWith("-") || line.StartsWith("*") ||
                System.Text.RegularExpressions.Regex.IsMatch(line, @"^\d+\.\s") ||
                System.Text.RegularExpressions.Regex.IsMatch(line, @"^[a-zA-Z]\.\s") ||
                System.Text.RegularExpressions.Regex.IsMatch(line, @"^[ivx]+\.\s", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
@@ -705,7 +799,7 @@ public sealed partial class AttachmentView : UserControl
         // Helpful suggestions
         TextBlock suggestionText = new()
         {
-            Text = "?? Suggestions:\n• Try opening the PDF in a dedicated PDF reader\n• Check if the PDF requires a password\n• Verify the file isn't corrupted\n• For scanned documents, OCR processing may be needed",
+            Text = "Suggestions:\nâ€¢ Try opening the PDF in a dedicated PDF reader\nâ€¢ Check if the PDF requires a password\nâ€¢ Verify the file isn't corrupted\nâ€¢ For scanned documents, OCR processing may be needed",
             FontSize = 12,
             Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
             TextWrapping = TextWrapping.Wrap,
@@ -719,6 +813,11 @@ public sealed partial class AttachmentView : UserControl
 
         errorContainer.Child = contentStack;
         pdfPagesContainer.Children.Add(errorContainer);
+    }
+
+    private void PdfDebugClear_Click(object sender, RoutedEventArgs e)
+    {
+        PdfDebugLogs.Clear();
     }
 
     private void PdfZoomIn_Click(object sender, RoutedEventArgs e)
@@ -833,15 +932,6 @@ public sealed partial class AttachmentView : UserControl
                             new GradientStop() { Color = Color.FromArgb(20, 59, 177, 119), Offset = 0.9 }
                         ]
                     },
-                    //BorderBrush = new LinearGradientBrush()
-                    //{
-                    //    GradientStops = new GradientStopCollection()
-                    //    {
-                    //        new GradientStop() { Color = Color.FromArgb(255, 147, 89, 248), Offset = 0.1 },
-                    //        new GradientStop() { Color = Color.FromArgb(255, 203, 123, 190), Offset = 0.5 },
-                    //        new GradientStop() { Color = Color.FromArgb(255, 240, 184, 131), Offset = 0.9 },
-                    //    },
-                    //},
                 }
             );
         }
@@ -875,12 +965,9 @@ public sealed partial class AttachmentView : UserControl
                     Debug.WriteLine("[AttachmentView] Detected potential phantom processing state - waiting 5 seconds to confirm...");
                     await Task.Delay(5000); // Wait 5 seconds to see if real processing is happening
 
-                    // If still stuck after 5 seconds and no AttachmentProcessor logs appeared, 
-                    // assume phantom state and reset
                     if (AttachmentVM.IsProcessing && !AttachmentVM.Attachment.IsProcessed)
                     {
                         Debug.WriteLine("[AttachmentView] PHANTOM PROCESSING DETECTED - Resetting and triggering processing");
-                        Debug.WriteLine("[AttachmentView] This indicates the attachment processor was never called or failed silently");
 
                         // Reset the processing state on UI thread
                         _dispatcher.TryEnqueue(() =>
@@ -921,7 +1008,6 @@ public sealed partial class AttachmentView : UserControl
                     _dispatcher.TryEnqueue(() =>
                     {
                         transcriptLoadingProgressRing.IsActive = false;
-                        // Could show timeout error message here
                     });
                     return;
                 }
@@ -934,7 +1020,6 @@ public sealed partial class AttachmentView : UserControl
                     _dispatcher.TryEnqueue(() =>
                     {
                         transcriptLoadingProgressRing.IsActive = false;
-                        // Could show an error message or retry button here
                     });
                     return;
                 }
@@ -977,7 +1062,6 @@ public sealed partial class AttachmentView : UserControl
                 _dispatcher.TryEnqueue(() =>
                 {
                     transcriptLoadingProgressRing.IsActive = false;
-                    // Could show error message to user
                 });
             }
         });
@@ -1051,10 +1135,8 @@ public sealed partial class AttachmentView : UserControl
             if (AttachmentVM?.Attachment?.Type is NoteAttachmentType.Audio or
                 NoteAttachmentType.Video)
             {
-                // Set the media player position
                 mediaPlayer.MediaPlayer.Position = timestamp;
 
-                // Find and select the corresponding transcription block
                 TranscriptionBlock? correspondingBlock = TranscriptionBlocks.FirstOrDefault(block =>
                     block.Start <= timestamp && block.End >= timestamp);
 
@@ -1077,41 +1159,17 @@ public sealed partial class AttachmentView : UserControl
             Debug.WriteLine($"[AttachmentView] Exception details: {ex}");
         }
     }
-
-    private void DisplaySimplePdfText(string pdfText)
-    {
-        if (pdfPagesContainer == null) return;
-
-        pdfPagesContainer.Children.Clear();
-
-        // Split by page markers and create page-like displays
-        string[] pages = pdfText.Split(new string[] { "=== Page " }, StringSplitOptions.RemoveEmptyEntries);
-
-        for (int i = 0; i < pages.Length; i++)
-        {
-            string pageText = pages[i];
-            int pageNumber = i + 1;
-
-            // Clean up the page text
-            if (pageText.StartsWith(pageNumber.ToString()))
-            {
-                string[] lines = pageText.Split('\n');
-                if (lines.Length > 1)
-                {
-                    pageText = string.Join("\n", lines.Skip(1)).Trim();
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(pageText)) continue;
-
-            PdfPageInfo pageInfo = new()
-            {
-                PageNumber = pageNumber,
-                FormattedText = pageText.Trim()
-            };
-
-            Border pageElement = CreatePdfPageElement(pageInfo);
-            pdfPagesContainer.Children.Add(pageElement);
-        }
-    }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

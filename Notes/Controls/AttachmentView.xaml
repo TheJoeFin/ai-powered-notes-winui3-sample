@@ -95,6 +95,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="50"/>
                 <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- PDF Header with document info -->
@@ -177,12 +178,38 @@
                 </StackPanel>
             </ScrollViewer>
 
+            <Expander x:Name="pdfDebugExpander"
+                      Grid.Row="2"
+                      Header="Debug Console"
+                      Margin="0,12,0,0"
+                      IsExpanded="False">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                Margin="0,0,0,8">
+                        <Button Content="Clear"
+                                Click="PdfDebugClear_Click"
+                                Style="{StaticResource SubtleButtonStyle}"/>
+                    </StackPanel>
+                    <ListView ItemsSource="{x:Bind PdfDebugLogs, Mode=OneWay}"
+                              MaxHeight="240">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <TextBlock Text="{Binding}"
+                                           TextWrapping="Wrap"/>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Expander>
+
             <!-- Loading indicator -->
             <StackPanel x:Name="pdfLoadingPanel"
                         Grid.Row="1"
                         VerticalAlignment="Center"
                         HorizontalAlignment="Center"
-                        Spacing="10">
+                        Spacing="10"
+                        Visibility="Collapsed">
                 <ProgressRing x:Name="pdfLoadingProgressRing"
                               IsActive="False"
                               Width="50" Height="50"/>
@@ -283,3 +310,7 @@
         </Grid>
     </Grid>
 </UserControl>
+
+
+
+

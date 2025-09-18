@@ -1,4 +1,4 @@
-﻿using Notes.AI.Embeddings;
+using Notes.AI.Embeddings;
 using Notes.Models;
 using System;
 using System.Collections.Generic;
@@ -13,8 +13,12 @@ using UglyToad.PdfPig.DocumentLayoutAnalysis;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.PageSegmenter;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.ReadingOrderDetector;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
+using SkiaSharp;
+using UglyToad.PdfPig.Graphics.Colors;
+using UglyToad.PdfPig.Rendering.Skia;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using Windows.Graphics.Imaging;
 
 namespace Notes;
 
@@ -164,7 +168,8 @@ internal partial class Utils
 // Advanced PDF processing utilities using PdfPig document layout analysis
 public static class PdfProcessor
 {
-    public static async Task<string> ExtractTextFromPdfAsync(StorageFile pdfFile)
+    // Expose strictTables mode publicly (optional param preserves back-compat)
+    public static async Task<string> ExtractTextFromPdfAsync(StorageFile pdfFile, bool strictTables = false)
     {
         Debug.WriteLine($"[PdfProcessor] Starting advanced PDF text extraction for: {pdfFile.Name}");
 
@@ -172,15 +177,15 @@ public static class PdfProcessor
         {
             byte[] pdfBytes = await ReadFileAsBytesAsync(pdfFile);
 
-            using PdfDocument document = PdfDocument.Open(pdfBytes);
+            using PdfDocument document = PdfDocument.Open(pdfBytes, SkiaRenderingParsingOptions.Instance);
+            document.AddSkiaPageFactory();
             StringBuilder textBuilder = new();
 
             for (int pageNumber = 1; pageNumber <= document.NumberOfPages; pageNumber++)
             {
                 Debug.WriteLine($"[PdfProcessor] Processing page {pageNumber}/{document.NumberOfPages} with advanced layout analysis");
 
-                Page page = document.GetPage(pageNumber);
-                string pageText = ExtractAdvancedTextFromPage(page);
+                string pageText = ExtractTextFromPageWithOcr(document, pageNumber, strictTables);
 
                 if (!string.IsNullOrWhiteSpace(pageText))
                 {
@@ -219,7 +224,7 @@ public static class PdfProcessor
         }
     }
 
-    public static async Task<PdfPageData> ExtractPageDataFromPdfAsync(StorageFile pdfFile)
+    public static async Task<PdfPageData> ExtractPageDataFromPdfAsync(StorageFile pdfFile, bool strictTables = false)
     {
         Debug.WriteLine($"[PdfProcessor] Starting enhanced PDF extraction with advanced layout analysis for: {pdfFile.Name}");
 
@@ -227,26 +232,52 @@ public static class PdfProcessor
         {
             byte[] pdfBytes = await ReadFileAsBytesAsync(pdfFile);
 
-            using PdfDocument document = PdfDocument.Open(pdfBytes);
+            using PdfDocument document = PdfDocument.Open(pdfBytes, SkiaRenderingParsingOptions.Instance);
+            document.AddSkiaPageFactory();
             List<PdfPageInfo> pages = [];
+
+            const float renderScale = 2.0f;
+            RGBColor backgroundColor = RGBColor.White;
 
             for (int pageNumber = 1; pageNumber <= document.NumberOfPages; pageNumber++)
             {
                 Debug.WriteLine($"[PdfProcessor] Processing page {pageNumber}/{document.NumberOfPages} with advanced layout analysis");
 
                 Page page = document.GetPage(pageNumber);
+                PdfRectangle cropBounds = GetEffectiveCropBounds(page);
+
                 PdfPageInfo pageInfo = new()
                 {
                     PageNumber = pageNumber,
                     Text = page.Text,
                     Width = (double)page.Width,
                     Height = (double)page.Height,
-                    // Extract advanced structured text with proper layout analysis
-                    FormattedText = ExtractAdvancedTextFromPage(page),
-
-                    // Create advanced structured content for better display
+                    FormattedText = ExtractTextFromPageWithOcr(document, pageNumber, strictTables),
                     StructuredContent = ExtractAdvancedStructuredContentFromPage(page)
                 };
+
+                pageInfo.CropLeft = cropBounds.Left;
+                pageInfo.CropBottom = cropBounds.Bottom;
+                pageInfo.CropWidth = cropBounds.Width;
+                pageInfo.CropHeight = cropBounds.Height;
+                pageInfo.Rotation = page.Rotation.Value;
+
+                try
+                {
+                    using SKBitmap bitmap = document.GetPageAsSKBitmap(pageNumber, renderScale, backgroundColor);
+                    if (bitmap != null)
+                    {
+                        pageInfo.ImageBytes = EncodeBitmapToPng(bitmap);
+                        pageInfo.ImagePixelWidth = bitmap.Width;
+                        pageInfo.ImagePixelHeight = bitmap.Height;
+                        pageInfo.RenderScaleX = pageInfo.CropWidth > 0 ? bitmap.Width / pageInfo.CropWidth : 0;
+                        pageInfo.RenderScaleY = pageInfo.CropHeight > 0 ? bitmap.Height / pageInfo.CropHeight : 0;
+                    }
+                }
+                catch (Exception renderEx)
+                {
+                    Debug.WriteLine($"[PdfProcessor] WARNING: Failed to render page {pageNumber}: {renderEx.Message}");
+                }
 
                 pages.Add(pageInfo);
             }
@@ -275,7 +306,14 @@ public static class PdfProcessor
                         Text = $"PDF Processing Error\n\n{ex.Message}\n\nThis PDF may require special handling.",
                         FormattedText = $"PDF Processing Error\n\n{ex.Message}\n\nThis PDF may require special handling.",
                         Width = 600,
-                        Height = 800
+                        Height = 800,
+                        CropLeft = 0,
+                        CropBottom = 0,
+                        CropWidth = 600,
+                        CropHeight = 800,
+                        RenderScaleX = 1,
+                        RenderScaleY = 1,
+                        Rotation = 0
                     }
                 ],
                 TotalPages = 1
@@ -283,34 +321,199 @@ public static class PdfProcessor
         }
     }
 
-    private static string ExtractAdvancedTextFromPage(Page page)
+    private static string ExtractTextFromPageWithOcr(PdfDocument document, int pageNumber, bool strictTables)
+    {
+        Page page = document.GetPage(pageNumber);
+
+        // Try advanced extraction first
+        string advanced = ExtractAdvancedTextFromPage(page, strictTables);
+        if (!string.IsNullOrWhiteSpace(advanced))
+        {
+            return advanced;
+        }
+
+        // If page has no letters/words, fall back to OCR by rendering the page
+        try
+        {
+            using SKBitmap bmp = document.GetPageAsSKBitmap(pageNumber, 2.0f, RGBColor.White);
+            if (bmp == null)
+            {
+                return string.Empty;
+            }
+
+            SoftwareBitmap softwareBitmap = ConvertSkBitmapToSoftwareBitmap(bmp);
+            if (softwareBitmap == null)
+            {
+                return string.Empty;
+            }
+
+            var imageText = AI.TextRecognition.TextRecognition.GetTextFromImage(softwareBitmap).GetAwaiter().GetResult();
+            if (imageText?.Lines == null || imageText.Lines.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            // Order by Y then X to form readable lines
+            var lines = imageText.Lines
+                .OrderBy(l => Math.Round(l.Y / 4) * 4)
+                .ThenBy(l => l.X)
+                .Select(l => l.Text?.Trim())
+                .Where(t => !string.IsNullOrWhiteSpace(t));
+
+            string ocrText = string.Join("\n", lines);
+            Debug.WriteLine($"[PdfProcessor] OCR fallback extracted {ocrText.Length} chars on page {pageNumber}");
+            return ocrText;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[PdfProcessor] OCR fallback failed on page {pageNumber}: {ex.Message}");
+            return string.Empty;
+        }
+    }
+
+    private static SoftwareBitmap ConvertSkBitmapToSoftwareBitmap(SKBitmap bitmap)
+    {
+        using SKData data = SKImage.FromBitmap(bitmap).Encode(SKEncodedImageFormat.Png, 100);
+        using InMemoryRandomAccessStream stream = new();
+
+        // Write PNG bytes into the WinRT stream
+        byte[] bytes = data.ToArray();
+        using (var writer = new DataWriter(stream))
+        {
+            writer.WriteBytes(bytes);
+            writer.StoreAsync().AsTask().GetAwaiter().GetResult();
+        }
+        stream.Seek(0);
+
+        BitmapDecoder decoder = BitmapDecoder.CreateAsync(stream).GetAwaiter().GetResult();
+        SoftwareBitmap sb = decoder.GetSoftwareBitmapAsync().GetAwaiter().GetResult();
+        if (sb.BitmapPixelFormat != BitmapPixelFormat.Bgra8 || sb.BitmapAlphaMode != BitmapAlphaMode.Premultiplied)
+        {
+            sb = SoftwareBitmap.Convert(sb, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+        }
+        return sb;
+    }
+
+    private static byte[] EncodeBitmapToPng(SKBitmap bitmap)
+    {
+        using SKImage image = SKImage.FromBitmap(bitmap);
+        using SKData data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
+    }
+
+    private static PdfRectangle GetEffectiveCropBounds(Page page)
+    {
+        PdfRectangle? cropBounds = page.CropBox?.Bounds;
+
+        if (cropBounds == null || cropBounds.Value.Width <= 0 || cropBounds.Value.Height <= 0)
+        {
+            cropBounds = page.MediaBox?.Bounds;
+        }
+
+        if (cropBounds == null || cropBounds.Value.Width <= 0 || cropBounds.Value.Height <= 0)
+        {
+            cropBounds = new PdfRectangle(0, 0, page.Width, page.Height);
+        }
+
+        return cropBounds.Value;
+    }
+
+    private static IReadOnlyList<Letter> GetCleanLetters(Page page)
+    {
+        IReadOnlyList<Letter> letters = page.Letters;
+        if (letters == null || letters.Count == 0)
+        {
+            return letters ?? Array.Empty<Letter>();
+        }
+
+        // Compute median height to filter tiny chart labels or huge watermarks
+        double[] heights = letters.Select(l => l.GlyphRectangle.Height).Where(h => h > 0).OrderBy(h => h).ToArray();
+        double medianHeight = heights.Length > 0 ? heights[heights.Length / 2] : 0;
+        double minHeight = medianHeight > 0 ? Math.Max(2, medianHeight * 0.35) : 0; // too small => noise
+        double maxHeight = medianHeight > 0 ? medianHeight * 3.0 : double.MaxValue;  // too large => watermark-like
+
+        // Deduplicate same-character letters drawn multiple times at the same spot (fill + stroke, shadows, etc.)
+        // We round the position to a small grid and keep only one occurrence per grid cell and character
+        const double grid = 0.25; // quarter-point grid is usually enough to merge duplicates
+        HashSet<string> seen = new();
+        List<Letter> filtered = new(letters.Count);
+        foreach (Letter l in letters)
+        {
+            double h = l.GlyphRectangle.Height;
+            if (h <= minHeight || h > maxHeight)
+            {
+                continue; // filter out extreme sizes
+            }
+
+            // Build a key based on rounded position and character
+            double cx = Math.Round((l.GlyphRectangle.Left + l.GlyphRectangle.Right) / 2 / grid) * grid;
+            double cy = Math.Round((l.GlyphRectangle.Bottom + l.GlyphRectangle.Top) / 2 / grid) * grid;
+            string key = $"{l.Value}:{cx:F2}:{cy:F2}";
+            if (seen.Add(key))
+            {
+                filtered.Add(l);
+            }
+        }
+
+        // If filtering removed too much (e.g., image-based), fall back to original
+        if (filtered.Count < letters.Count * 0.25)
+        {
+            return letters;
+        }
+
+        return filtered;
+    }
+
+    private static IEnumerable<Word> ExtractWordsClean(Page page)
+    {
+        IReadOnlyList<Letter> cleanLetters = GetCleanLetters(page);
+        if (cleanLetters == null || cleanLetters.Count == 0)
+        {
+            return Array.Empty<Word>();
+        }
+
+        NearestNeighbourWordExtractor wordExtractor = NearestNeighbourWordExtractor.Instance;
+        IEnumerable<Word> words = wordExtractor.GetWords(cleanLetters);
+        if (!words.Any())
+        {
+            return Array.Empty<Word>();
+        }
+
+        // De-duplicate words with almost identical bounding boxes and text
+        var groups = words.GroupBy(w => new
+        {
+            Text = w.Text.Trim(),
+            X = Math.Round(w.BoundingBox.Left, 1),
+            Y = Math.Round(w.BoundingBox.Bottom, 1),
+            W = Math.Round(w.BoundingBox.Width, 1),
+            H = Math.Round(w.BoundingBox.Height, 1)
+        });
+        List<Word> deduped = new();
+        foreach (var g in groups)
+        {
+            Word keep = g.OrderBy(w => w.Letters.Count()).First();
+            deduped.Add(keep);
+        }
+        return deduped;
+    }
+
+    private static string ExtractAdvancedTextFromPage(Page page, bool strictTables = false)
     {
         try
         {
             Debug.WriteLine($"[PdfProcessor] Starting advanced text extraction for page {page.Number}");
 
-            IReadOnlyList<Letter> letters = page.Letters; // Get all letters without preprocessing
-            if (!letters.Any())
-            {
-                Debug.WriteLine($"[PdfProcessor] No letters found on page {page.Number}");
-                return page.Text; // Fallback to basic text if no letters found
-            }
-
-            Debug.WriteLine($"[PdfProcessor] Found {letters.Count()} letters on page {page.Number}");
-
-            // 1. Extract words using advanced word extractor
-            NearestNeighbourWordExtractor wordExtractor = NearestNeighbourWordExtractor.Instance;
-            IEnumerable<Word> words = wordExtractor.GetWords(letters);
+            // Use cleaned letters to avoid duplicated and noisy glyphs
+            IEnumerable<Word> words = ExtractWordsClean(page);
 
             if (!words.Any())
             {
                 Debug.WriteLine($"[PdfProcessor] No words extracted from page {page.Number}");
-                return page.Text; // Fallback to basic text
+                return string.Empty; // Let caller decide OCR fallback
             }
 
             Debug.WriteLine($"[PdfProcessor] Extracted {words.Count()} words from page {page.Number}");
 
-            // 2. Segment page into text blocks using advanced page segmentation
             DocstrumBoundingBoxes pageSegmenter = DocstrumBoundingBoxes.Instance;
             IReadOnlyList<TextBlock> textBlocks = pageSegmenter.GetBlocks(words);
 
@@ -322,22 +525,22 @@ public static class PdfProcessor
 
             Debug.WriteLine($"[PdfProcessor] Found {textBlocks.Count()} text blocks on page {page.Number}");
 
-            // 3. Apply reading order detection for proper text flow
             UnsupervisedReadingOrderDetector readingOrderDetector = UnsupervisedReadingOrderDetector.Instance;
             IEnumerable<TextBlock> orderedTextBlocks = readingOrderDetector.Get(textBlocks);
 
             Debug.WriteLine($"[PdfProcessor] Applied reading order to {orderedTextBlocks.Count()} text blocks");
 
-            // 4. Build formatted text maintaining structure
             StringBuilder result = new();
 
             foreach (TextBlock? block in orderedTextBlocks.OrderBy(b => b.ReadingOrder))
             {
-                string blockText = ExtractTextFromBlock(block);
+                string blockText = strictTables && LooksLikeTable(block)
+                    ? ExtractTableText(block)
+                    : NormalizeWhitespace(ExtractTextFromBlock(block));
+
                 if (!string.IsNullOrWhiteSpace(blockText))
                 {
-                    // Add appropriate spacing based on block positioning
-                    BlockType blockType = DetermineBlockType(block);
+                    BlockType blockType = strictTables && LooksLikeTable(block) ? BlockType.Table : DetermineBlockType(block);
 
                     switch (blockType)
                     {
@@ -354,7 +557,7 @@ public static class PdfProcessor
                             result.AppendLine($"• {blockText.Trim()}");
                             break;
                         case BlockType.Table:
-                            result.AppendLine($"    {blockText.Trim()}");
+                            result.AppendLine(blockText); // already formatted with columns
                             break;
                         default:
                             result.AppendLine(blockText.Trim());
@@ -371,14 +574,76 @@ public static class PdfProcessor
         catch (Exception ex)
         {
             Debug.WriteLine($"[PdfProcessor] Error in advanced text extraction: {ex.Message}");
-            Debug.WriteLine($"[PdfProcessor] Falling back to basic text extraction");
-            return page.Text; // Fallback to basic text extraction
+            return string.Empty; // Let caller decide OCR fallback
         }
+    }
+
+    private static bool LooksLikeTable(TextBlock block)
+    {
+        // Heuristic: multiple lines, at least some lines with 3+ words and sizable horizontal gaps
+        if (block.TextLines.Count() < 2) return false;
+        int linesWithManyWords = block.TextLines.Count(l => l.Words.Count() >= 3);
+        if (linesWithManyWords == 0) return false;
+        // detect repeated big gaps within lines
+        foreach (var line in block.TextLines)
+        {
+            var w = line.Words.OrderBy(x => x.BoundingBox.Left).ToList();
+            if (w.Count < 2) continue;
+            var gaps = new List<double>();
+            for (int i = 1; i < w.Count; i++)
+            {
+                gaps.Add(w[i].BoundingBox.Left - w[i - 1].BoundingBox.Right);
+            }
+            double medianGap = gaps.OrderBy(g => g).ElementAt(gaps.Count / 2);
+            if (gaps.Count(g => g > medianGap * 1.6) >= 1)
+                return true;
+        }
+        return false;
+    }
+
+    private static string ExtractTableText(TextBlock block)
+    {
+        // Format each line, inserting tabs when gaps are significantly larger than the typical gap
+        StringBuilder sb = new();
+        foreach (var line in block.TextLines)
+        {
+            var words = line.Words.OrderBy(w => w.BoundingBox.Left).ToList();
+            if (words.Count == 0) continue;
+            var gaps = new List<double>();
+            for (int i = 1; i < words.Count; i++)
+            {
+                gaps.Add(words[i].BoundingBox.Left - words[i - 1].BoundingBox.Right);
+            }
+            double medianGap = gaps.Count > 0 ? gaps.OrderBy(g => g).ElementAt(gaps.Count / 2) : 0;
+            double tabThreshold = medianGap > 0 ? medianGap * 1.6 : 15; // px heuristic
+
+            Word prev = null;
+            for (int i = 0; i < words.Count; i++)
+            {
+                var w = words[i];
+                if (i > 0)
+                {
+                    double gap = w.BoundingBox.Left - prev.BoundingBox.Right;
+                    sb.Append(gap > tabThreshold ? "\t" : " ");
+                }
+                sb.Append(w.Text);
+                prev = w;
+            }
+            sb.AppendLine();
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string NormalizeWhitespace(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return input;
+        string collapsed = System.Text.RegularExpressions.Regex.Replace(input, " {3,}", "  ");
+        collapsed = System.Text.RegularExpressions.Regex.Replace(collapsed, "\n{2,}", "\n");
+        return collapsed.Trim();
     }
 
     private static string ExtractTextFromWordsWithFallback(IEnumerable<Word> words)
     {
-        // Fallback method when text block segmentation fails
         IOrderedEnumerable<Word> sortedWords = words.OrderBy(w => w.BoundingBox.Top).ThenBy(w => w.BoundingBox.Left);
         StringBuilder result = new();
 
@@ -387,15 +652,13 @@ public static class PdfProcessor
         {
             if (previousWord != null)
             {
-                // Check if we need a line break (significant Y difference)
                 if (Math.Abs(word.BoundingBox.Top - previousWord.BoundingBox.Top) > 5)
                 {
                     result.AppendLine();
                 }
-                // Check if we need spacing (significant X gap)
                 else if (word.BoundingBox.Left - previousWord.BoundingBox.Right > 10)
                 {
-                    result.Append("    "); // Tab-like spacing
+                    result.Append("    ");
                 }
                 else
                 {
@@ -407,12 +670,11 @@ public static class PdfProcessor
             previousWord = word;
         }
 
-        return result.ToString();
+        return NormalizeWhitespace(result.ToString());
     }
 
     private static string ExtractTextFromBlock(TextBlock block)
     {
-        // Extract text from all words in the block, maintaining proper spacing
         IOrderedEnumerable<Word> blockWords = block.TextLines
             .SelectMany(line => line.Words)
             .OrderBy(w => w.BoundingBox.Top)
@@ -425,15 +687,13 @@ public static class PdfProcessor
         {
             if (previousWord != null)
             {
-                // Check for line breaks within the block
                 if (Math.Abs(word.BoundingBox.Top - previousWord.BoundingBox.Top) > 3)
                 {
                     result.Append(" ");
                 }
-                // Check for significant spacing
                 else if (word.BoundingBox.Left - previousWord.BoundingBox.Right > 15)
                 {
-                    result.Append("  "); // Double space for gaps
+                    result.Append("  ");
                 }
                 else
                 {
@@ -453,11 +713,9 @@ public static class PdfProcessor
         string text = ExtractTextFromBlock(block).Trim();
         PdfRectangle boundingBox = block.BoundingBox;
 
-        // Determine block type based on content and positioning
         if (string.IsNullOrWhiteSpace(text))
             return BlockType.Normal;
 
-        // Header detection: short text, positioned high, often bold or larger
         if (text.Length < 100 &&
             (text.All(c => char.IsUpper(c) || char.IsWhiteSpace(c) || char.IsPunctuation(c)) ||
              text.EndsWith(":") ||
@@ -466,7 +724,6 @@ public static class PdfProcessor
             return BlockType.Header;
         }
 
-        // List detection: starts with bullet points or numbers
         if (text.StartsWith("•") || text.StartsWith("-") || text.StartsWith("*") ||
             System.Text.RegularExpressions.Regex.IsMatch(text, @"^\d+\.\s") ||
             System.Text.RegularExpressions.Regex.IsMatch(text, @"^[a-zA-Z]\.\s"))
@@ -474,10 +731,9 @@ public static class PdfProcessor
             return BlockType.List;
         }
 
-        // Table detection: multiple columns or structured spacing
         if (block.TextLines.Count() > 1 &&
             block.TextLines.Any(line => line.Words.Count() > 3) &&
-            text.Contains("  ")) // Multiple spaces indicating columns
+            text.Contains("  "))
         {
             return BlockType.Table;
         }
@@ -502,10 +758,31 @@ public static class PdfProcessor
         string text = ExtractTextFromBlock(block);
         if (string.IsNullOrWhiteSpace(text)) return null;
 
-        PdfRectangle boundingBox = block.BoundingBox;
+        List<Letter> letters = block.TextLines
+            .SelectMany(line => line.Words)
+            .SelectMany(word => word.Letters)
+            .ToList();
+
+        if (!letters.Any())
+        {
+            return null;
+        }
+
+        double minLeft = letters.Min(l => l.GlyphRectangle.Left);
+        double maxRight = letters.Max(l => l.GlyphRectangle.Right);
+        double minBottom = letters.Min(l => l.GlyphRectangle.Bottom);
+        double maxTop = letters.Max(l => l.GlyphRectangle.Top);
+
+        double width = maxRight - minLeft;
+        double height = maxTop - minBottom;
+
+        if (width <= 0 || height <= 0)
+        {
+            return null;
+        }
+
         BlockType blockType = DetermineBlockType(block);
 
-        // Convert block type to our content type
         PdfContentType contentType = blockType switch
         {
             BlockType.Header => PdfContentType.Header,
@@ -517,14 +794,14 @@ public static class PdfProcessor
         return new PdfTextElement
         {
             Text = text,
-            Left = boundingBox.Left,
-            Top = boundingBox.Top,
-            Width = boundingBox.Width,
-            Height = boundingBox.Height,
-            FontName = "Unknown", // Would need additional analysis to determine font
+            Left = minLeft,
+            Top = maxTop,
+            Width = width,
+            Height = height,
+            FontName = "Unknown",
             ElementType = contentType,
-            IsIndented = boundingBox.Left > 50,
-            IsCentered = Math.Abs(boundingBox.Left - (612 - boundingBox.Right)) < 50 // Rough center detection
+            IsIndented = minLeft > 50,
+            IsCentered = Math.Abs(minLeft - (612 - maxRight)) < 50
         };
     }
 
@@ -534,13 +811,7 @@ public static class PdfProcessor
 
         try
         {
-            IReadOnlyList<Letter> letters = page.Letters;
-            if (!letters.Any()) return elements;
-
-            // Use advanced PdfPig analysis
-            NearestNeighbourWordExtractor wordExtractor = NearestNeighbourWordExtractor.Instance;
-            IEnumerable<Word> words = wordExtractor.GetWords(letters);
-
+            IEnumerable<Word> words = ExtractWordsClean(page);
             if (!words.Any()) return elements;
 
             DocstrumBoundingBoxes pageSegmenter = DocstrumBoundingBoxes.Instance;
@@ -588,8 +859,18 @@ public class PdfPageInfo
     public int PageNumber { get; set; }
     public string Text { get; set; }
     public string FormattedText { get; set; }
+    public byte[]? ImageBytes { get; set; }
+    public int? ImagePixelWidth { get; set; }
+    public int? ImagePixelHeight { get; set; }
     public double Width { get; set; }
     public double Height { get; set; }
+    public double CropLeft { get; set; }
+    public double CropBottom { get; set; }
+    public double CropWidth { get; set; }
+    public double CropHeight { get; set; }
+    public double RenderScaleX { get; set; }
+    public double RenderScaleY { get; set; }
+    public int Rotation { get; set; }
     public List<PdfTextElement> StructuredContent { get; set; } = [];
 }
 
@@ -646,3 +927,4 @@ public enum ContentType
     Note = 4,
     PDF = 5
 }
+
